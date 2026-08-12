@@ -144,6 +144,167 @@ describe('ModuleService.queryUsbnetMode', () => {
   })
 })
 
+describe('ModuleService.getTelemetry', () => {
+  // connect() 在测试里是 mock（不真正探测 AT），所以按顺序喂 8 条查询应答。
+  const feedResponses = (usb: any, responses: string[]) => {
+    responses.forEach((r) => usb.read.mockResolvedValueOnce(r))
+  }
+
+  it('parses running status and device info from AT responses', async () => {
+    const usb = createMockUsb()
+    feedResponses(usb, [
+      '+QNWINFO: "LTE","460 11",LTE BAND 1,100\r\nOK',
+      '+CREG: 0,1\r\nOK',
+      'AT+CGSN\r\n861234567890123\r\n\r\nOK',
+      '+QCCID: 89860112750000123456\r\nOK',
+      '460001234567890\r\nOK',
+      '+CNUM: 1,"13800138000",129,7,4\r\nOK',
+      '+CSQ: 20,0\r\nOK',
+      '+CPIN: READY\r\nOK',
+    ])
+    const service = new ModuleService(usb)
+
+    const result = await service.getTelemetry(createMockDevice(0x2c7c, 0x0125))
+
+    expect(result.running).toEqual({
+      networkMode: 'LTE',
+      band: 'LTE BAND 1',
+      channel: '100',
+      registration: '已注册（本地网络）',
+      signal: { bars: 4, simReady: true },
+    })
+    expect(result.deviceInfo).toEqual({
+      imei: '861234567890123',
+      iccid: '89860112750000123456',
+      imsi: '460001234567890',
+      phoneNumber: '13800138000',
+    })
+    expect(usb.send).toHaveBeenCalledWith('AT+QNWINFO')
+    expect(usb.send).toHaveBeenCalledWith('AT+CREG?')
+    expect(usb.send).toHaveBeenCalledWith('AT+CGSN')
+    expect(usb.send).toHaveBeenCalledWith('AT+QCCID')
+    expect(usb.send).toHaveBeenCalledWith('AT+CIMI')
+    expect(usb.send).toHaveBeenCalledWith('AT+CNUM')
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('maps CREG roaming and parses quoted band', async () => {
+    const usb = createMockUsb()
+    feedResponses(usb, [
+      '+QNWINFO: "WCDMA","460 00","WCDMA 2100",10713\r\nOK',
+      '+CREG: 0,5\r\nOK',
+      '861234567890123\r\nOK',
+      '+QCCID: 89860112750000123456\r\nOK',
+      '460001234567890\r\nOK',
+      '+CNUM: 1,"13900139000",129,7,4\r\nOK',
+      '+CSQ: 12,0\r\nOK',
+      '+CPIN: READY\r\nOK',
+    ])
+    const service = new ModuleService(usb)
+
+    const result = await service.getTelemetry(createMockDevice(0x2c7c, 0x0125))
+
+    expect(result.running).toEqual({
+      networkMode: 'WCDMA',
+      band: 'WCDMA 2100',
+      channel: '10713',
+      registration: '已注册（漫游）',
+      signal: { bars: 2, simReady: true },
+    })
+  })
+
+  it('falls back to placeholders when phone number is unavailable', async () => {
+    const usb = createMockUsb()
+    feedResponses(usb, [
+      '+QNWINFO: "LTE","460 11",LTE BAND 1,100\r\nOK',
+      '+CREG: 0,1\r\nOK',
+      '861234567890123\r\n\r\nOK',
+      '+QCCID: 89860112750000123456\r\nOK',
+      '460001234567890\r\nOK',
+      'ERROR', // +CNUM 未分配号码 → +CME ERROR
+      '+CSQ: 20,0\r\nOK',
+      '+CPIN: READY\r\nOK',
+    ])
+    const service = new ModuleService(usb)
+
+    const result = await service.getTelemetry(createMockDevice(0x2c7c, 0x0125))
+
+    expect(result.deviceInfo.phoneNumber).toBe('—')
+    // 手机号查询失败不影响信号强度解析。
+    expect(result.running.signal).toEqual({ bars: 4, simReady: true })
+  })
+
+  it('serializes concurrent queries so AT commands never interleave', async () => {
+    const usb = createMockUsb()
+    const single = [
+      '+QNWINFO: "LTE","460 11",LTE BAND 1,100\r\nOK',
+      '+CREG: 0,1\r\nOK',
+      '861234567890123\r\n\r\nOK',
+      '+QCCID: 89860112750000123456\r\nOK',
+      '460001234567890\r\nOK',
+      '+CNUM: 1,"13800138000",129,7,4\r\nOK',
+      '+CSQ: 20,0\r\nOK',
+      '+CPIN: READY\r\nOK',
+    ]
+    feedResponses(usb, [...single, ...single])
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+
+    // 两个查询几乎同时发起（SettingsCard 挂载时模式查询与遥测查询并存）。
+    const results = await Promise.all([
+      service.getTelemetry(device),
+      service.getTelemetry(device),
+    ])
+
+    expect(results).toHaveLength(2)
+    // runExclusive 保证严格串行：8 条指令按顺序完整出现两次，绝不交错。
+    const commands = [
+      'AT+QNWINFO',
+      'AT+CREG?',
+      'AT+CGSN',
+      'AT+QCCID',
+      'AT+CIMI',
+      'AT+CNUM',
+      'AT+CSQ',
+      'AT+CPIN?',
+    ]
+    const sent = usb.send.mock.calls.map((c: any[]) => c[0])
+    expect(sent).toEqual([...commands, ...commands])
+  })
+
+  it('handles no SIM: fields fall back to placeholders and signal is nulled', async () => {
+    const usb = createMockUsb()
+    feedResponses(usb, [
+      '+QNWINFO: "NO SERVICE"\r\nOK',
+      '+CREG: 0,0\r\nOK',
+      'ERROR',
+      'ERROR',
+      'ERROR',
+      'ERROR',
+      '+CSQ: 15,0\r\nOK', // CSQ 有值，但 SIM 未插入，档位必须置空。
+      '+CPIN: NOT INSERTED\r\nOK',
+    ])
+    const service = new ModuleService(usb)
+
+    const result = await service.getTelemetry(createMockDevice(0x2c7c, 0x0125))
+
+    expect(result.running).toEqual({
+      networkMode: '—',
+      band: '—',
+      channel: '—',
+      registration: '未注册',
+      signal: { bars: null, simReady: false },
+    })
+    expect(result.deviceInfo).toEqual({
+      imei: '—',
+      iccid: '—',
+      imsi: '—',
+      phoneNumber: '—',
+    })
+  })
+})
+
 describe('ModuleService.setUsbnetMode', () => {
   it('sends ecm command, reboots, and returns the fresh device after reconnect', async () => {
     const usb = createMockUsb()

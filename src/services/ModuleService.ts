@@ -10,13 +10,31 @@ import {
   AT_USBNET_QUERY,
   AT_USBNET_QMI,
   AT_USBNET_ECM,
+  AT_QNWINFO,
+  AT_CREG,
+  AT_CGSN,
+  AT_QCCID,
+  AT_CIMI,
+  AT_CNUM,
+  AT_CSQ,
+  AT_CPIN,
   RECONNECT_WAIT_MS,
   MODE_RECONNECT_WAIT_MS,
 } from '../constants'
-import type { ModuleMode, UsbnetMode, SetUsbnetModeResult } from '../types'
+import type {
+  ModuleMode,
+  UsbnetMode,
+  SetUsbnetModeResult,
+  RunningStatus,
+  DeviceInfo,
+  Telemetry,
+  SignalInfo,
+} from '../types'
 
 export class ModuleService {
   private diagnostics: string[] = []
+  // 操作串行化队列：同一 AT 口同一时刻只允许一条操作链（见 runExclusive）。
+  private opQueue: Promise<unknown> = Promise.resolve()
 
   private log(line: string): void {
     this.diagnostics.push(line)
@@ -54,6 +72,23 @@ export class ModuleService {
     throw lastErr
   }
 
+  /**
+   * 操作串行化：同一 AT 口同一时刻只允许一条操作链。
+   *
+   * SettingsCard 挂载时工作模式查询与运行状态/设备信息查询会同时发起，
+   * 而 UsbService.connect/send/read 共享 inEndpoint 状态、不并发安全——两条链
+   * 并发收发会在同一 IN 端点上互相串读（各自读到对方的应答）。用 promise 链
+   * 让每个公开操作排队执行；前序操作失败不阻塞后续操作。
+   */
+  private runExclusive<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.opQueue.then(fn, fn)
+    this.opQueue = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
   detectState(device: USBDevice): ModuleMode {
     if (device.vendorId === ORIGINAL_VID && device.productId === ORIGINAL_PID) {
       return 'original'
@@ -83,28 +118,30 @@ export class ModuleService {
       // 「Device not connected」），自动重试一次即可恢复。
       // CFUN 只在指令确认成功之后发送，因此重试绝不会把指令重复发到
       // 「已写入并重启」这种不可逆阶段。
-      await this.withRetry(async () => {
-        await this.usb.connect(device)
-        await this.usb.send(command)
-        const response = await this.usb.read()
-        this.log(`usbcfg response: ${JSON.stringify(response)}`)
-        if (!response.includes('OK')) {
-          throw new Error(`Module rejected command: ${response}`)
-        }
-      })
-      // CFUN 后模块随即软重启（中断 10~30 秒）。此刻再 read() 必然挂起，
-      // withTimeout 超时后底层 transferIn 无法取消，会留下 in-flight 传输。
-      // 因此 CFUN 后不读取，直接进入重连检测。也不调用 close()：重启会让
-      // 旧会话自然消亡，而 close() 在此模块上不稳定（见 UsbService.connect）。
-      await this.usb.send(AT_CFUN)
+      return await this.runExclusive(async () => {
+        await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(command)
+          const response = await this.usb.read()
+          this.log(`usbcfg response: ${JSON.stringify(response)}`)
+          if (!response.includes('OK')) {
+            throw new Error(`Module rejected command: ${response}`)
+          }
+        })
+        // CFUN 后模块随即软重启（中断 10~30 秒）。此刻再 read() 必然挂起，
+        // withTimeout 超时后底层 transferIn 无法取消，会留下 in-flight 传输。
+        // 因此 CFUN 后不读取，直接进入重连检测。也不调用 close()：重启会让
+        // 旧会话自然消亡，而 close() 在此模块上不稳定（见 UsbService.connect）。
+        await this.usb.send(AT_CFUN)
 
-      const detected = await this.waitForReconnect(
-        device,
-        expectedVid,
-        expectedPid,
-        RECONNECT_WAIT_MS,
-      )
-      return { detected }
+        const detected = await this.waitForReconnect(
+          device,
+          expectedVid,
+          expectedPid,
+          RECONNECT_WAIT_MS,
+        )
+        return { detected }
+      })
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err))
       ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
@@ -118,19 +155,148 @@ export class ModuleService {
     try {
       // 查询保持会话打开（不 close），失败时自动重试一次。
       // 掉线一次是模块间歇性问题，不是设备状态错误，无需用户手动点「重试」。
-      return await this.withRetry(async () => {
-        await this.usb.connect(device)
-        await this.usb.send(AT_USBNET_QUERY)
-        const response = await this.usb.read()
-        this.log(`usbnet query response: ${JSON.stringify(response)}`)
-        const match = response.match(/"usbnet",(\d+)/)
-        if (!match) {
-          throw new Error(`无法解析当前工作模式: ${response}`)
-        }
-        const value = Number(match[1])
-        if (value === 0) return 'qmi'
-        if (value === 1) return 'ecm'
-        throw new Error(`未知的 usbnet 模式: ${value}`)
+      // 放入 runExclusive：与运行状态/设备信息查询串行，避免同口并发串读。
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(AT_USBNET_QUERY)
+          const response = await this.usb.read()
+          this.log(`usbnet query response: ${JSON.stringify(response)}`)
+          const match = response.match(/"usbnet",(\d+)/)
+          if (!match) {
+            throw new Error(`无法解析当前工作模式: ${response}`)
+          }
+          const value = Number(match[1])
+          if (value === 0) return 'qmi'
+          if (value === 1) return 'ecm'
+          throw new Error(`未知的 usbnet 模式: ${value}`)
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /** 发送一条只读 AT 指令并等待应答；read() 累积到 OK/ERROR 为止。 */
+  private async sendAndRead(command: string): Promise<string> {
+    await this.usb.send(command)
+    return await this.usb.read()
+  }
+
+  // AT+CREG? 的状态值 → 注册状态文案。
+  private static readonly REGISTRATION_STATES: Record<number, string> = {
+    0: '未注册',
+    1: '已注册（本地网络）',
+    2: '正在搜索',
+    3: '注册被拒绝',
+    4: '未知',
+    5: '已注册（漫游）',
+  }
+
+  // 取首个 15 位数字串作为 IMEI/IMSI（回显文本里混有命令回显与换行）。
+  private static digits(raw: string): string | undefined {
+    return raw.match(/\d{15}/)?.[0]
+  }
+
+  /**
+   * 解析运行状态。AT+QNWINFO 例：+QNWINFO: "LTE","460 11",LTE BAND 1,100
+   * → 网络模式/频段/信道；AT+CREG? 例：+CREG: 0,1。查询不到时用「—」占位。
+   */
+  private parseRunningStatus(
+    qnw: string,
+    creg: string,
+    csq: string,
+    cpin: string,
+  ): RunningStatus {
+    const qnwMatch = qnw.match(
+      /\+QNWINFO:\s*"([^"]+)"\s*,\s*"([^"]*)"\s*,\s*([^,]+)\s*,\s*(\d+)/,
+    )
+    const networkMode = qnwMatch?.[1] ?? '—'
+    const band = (qnwMatch?.[3] ?? '—').replace(/["']/g, '').trim()
+    const channel = qnwMatch?.[4] ?? '—'
+
+    // +CREG: <n>,<stat>（部分固件只回 <stat>）。
+    const statMatch =
+      creg.match(/\+CREG:\s*\d+\s*,\s*(\d+)/) ?? creg.match(/\+CREG:\s*(\d+)/)
+    const stat = statMatch ? Number(statMatch[1]) : undefined
+    const registration =
+      stat !== undefined
+        ? (ModuleService.REGISTRATION_STATES[stat] ?? `未知（${stat}）`)
+        : '—'
+
+    return {
+      networkMode,
+      band,
+      channel,
+      registration,
+      signal: this.parseSignal(csq, cpin),
+    }
+  }
+
+  /** 解析信号强度：AT+CSQ 的 rssi(0-31) 映射 0-4 档；SIM 未就绪或 rssi=99 时无档位。 */
+  private parseSignal(csq: string, cpin: string): SignalInfo {
+    // SIM 未就绪：+CPIN? 非 READY（无卡通常回 +CME ERROR: SIM not inserted / NOT INSERTED）。
+    const simReady = /\+CPIN:\s*READY/i.test(cpin)
+
+    // +CSQ: <rssi>,<ber>；rssi=99 表示无法测量。
+    const rssi = Number(csq.match(/\+CSQ:\s*(\d+)/)?.[1])
+    let bars: number | null = null
+    if (Number.isFinite(rssi) && rssi !== 99 && simReady) {
+      if (rssi === 0) bars = 0
+      else if (rssi <= 9) bars = 1
+      else if (rssi <= 14) bars = 2
+      else if (rssi <= 19) bars = 3
+      else bars = 4
+    }
+    return { bars, simReady }
+  }
+
+  /** 解析设备信息：IMEI/IMSI 取数字串，ICCID 来自 +QCCID:，本机号码来自 +CNUM 引号内。 */
+  private parseDeviceInfo(
+    imeiRaw: string,
+    iccidRaw: string,
+    imsiRaw: string,
+    numRaw: string,
+  ): DeviceInfo {
+    const iccid = iccidRaw.match(/\+QCCID:\s*([\w]+)/)?.[1] ?? '—'
+    const numMatch = numRaw.match(/\+CNUM:\s*[^,]*,\s*"([^"]*)"/)
+    return {
+      imei: ModuleService.digits(imeiRaw) ?? '—',
+      iccid,
+      imsi: ModuleService.digits(imsiRaw) ?? '—',
+      phoneNumber: numMatch?.[1] || '—',
+    }
+  }
+
+  /**
+   * 一次性读取运行状态 + 设备信息。
+   * 只读指令按顺序逐条收发（同一 AT 口不能并发读写）；connect() 幂等，
+   * 连接一次后复用会话，失败时整体重试一次（覆盖会话间歇性掉线）。
+   * 与查询 usbnet 相同：正常流程不调用 close()。查询不到/被拒的字段以
+   * 占位符「—」表示，不会让整块查询失败。
+   */
+  async getTelemetry(device: USBDevice): Promise<Telemetry> {
+    this.diagnostics = []
+    try {
+      // 放入 runExclusive：与工作模式查询串行，避免同一 AT 口并发收发互相串读。
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          const qnw = await this.sendAndRead(AT_QNWINFO)
+          const creg = await this.sendAndRead(AT_CREG)
+          const imei = await this.sendAndRead(AT_CGSN)
+          const iccid = await this.sendAndRead(AT_QCCID)
+          const imsi = await this.sendAndRead(AT_CIMI)
+          const num = await this.sendAndRead(AT_CNUM)
+          const csq = await this.sendAndRead(AT_CSQ)
+          const cpin = await this.sendAndRead(AT_CPIN)
+          return {
+            running: this.parseRunningStatus(qnw, creg, csq, cpin),
+            deviceInfo: this.parseDeviceInfo(imei, iccid, imsi, num),
+          }
+        })
       })
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err))
@@ -154,46 +320,50 @@ export class ModuleService {
     const command = target === 'qmi' ? AT_USBNET_QMI : AT_USBNET_ECM
 
     try {
-      // 指令 + 校验放在 withRetry 内（自动重试一次，覆盖会话间歇性掉线）。
-      // CFUN 在确认 OK 之后才发送，重试不会把指令重复发到不可逆阶段。
-      await this.withRetry(async () => {
-        onProgress?.('sending')
-        await this.usb.connect(device)
-        await this.usb.send(command)
-        const response = await this.usb.read()
-        this.log(`usbnet response: ${JSON.stringify(response)}`)
-        if (!response.includes('OK')) {
-          throw new Error(`Module rejected command: ${response}`)
-        }
-      })
-      onProgress?.('waiting-reboot')
-      // 与 applyConfig 同理：CFUN 后模块立即软重启，read() 必然挂起并留下
-      // 无法取消的 in-flight 传输。不调用 close()：重启后旧会话自然消亡，
-      // 由 waitForDevice 等待重枚举后的新设备对象。
-      await this.usb.send(AT_CFUN)
+      // 放入 runExclusive：切换过程中模块重启，期间的其他查询不应在同一
+      // AT 口上并发（它们会排队等到本操作结束）。
+      return await this.runExclusive(async () => {
+        // 指令 + 校验放在 withRetry 内（自动重试一次，覆盖会话间歇性掉线）。
+        // CFUN 在确认 OK 之后才发送，重试不会把指令重复发到不可逆阶段。
+        await this.withRetry(async () => {
+          onProgress?.('sending')
+          await this.usb.connect(device)
+          await this.usb.send(command)
+          const response = await this.usb.read()
+          this.log(`usbnet response: ${JSON.stringify(response)}`)
+          if (!response.includes('OK')) {
+            throw new Error(`Module rejected command: ${response}`)
+          }
+        })
+        onProgress?.('waiting-reboot')
+        // 与 applyConfig 同理：CFUN 后模块立即软重启，read() 必然挂起并留下
+        // 无法取消的 in-flight 传输。不调用 close()：重启后旧会话自然消亡，
+        // 由 waitForDevice 等待重枚举后的新设备对象。
+        await this.usb.send(AT_CFUN)
 
-      onProgress?.('reconnecting')
-      // 尽力自动重连。切换本身在指令确认 OK 时已经成功；重连只为刷新显示。
-      // 此模块未暴露 USB 序列号，WebUSB 授权不持久（见 UsbService 注释），
-      // getDevices() 重启后返回空，自动重连通常失败——这是浏览器的权限模型
-      // 限制，不是切换失败，因此超时返回 reconnected:false，由 UI 引导用户
-      // 手动重新连接。
-      const fresh = await this.waitForDevice(
-        device,
-        device.vendorId,
-        device.productId,
-        timeoutMs,
-      )
-      if (fresh) {
-        this.log(
-          `reconnected to fresh device (VID ${this.hex(fresh.vendorId)} PID ${this.hex(fresh.productId)})`,
+        onProgress?.('reconnecting')
+        // 尽力自动重连。切换本身在指令确认 OK 时已经成功；重连只为刷新显示。
+        // 此模块未暴露 USB 序列号，WebUSB 授权不持久（见 UsbService 注释），
+        // getDevices() 重启后返回空，自动重连通常失败——这是浏览器的权限模型
+        // 限制，不是切换失败，因此超时返回 reconnected:false，由 UI 引导用户
+        // 手动重新连接。
+        const fresh = await this.waitForDevice(
+          device,
+          device.vendorId,
+          device.productId,
+          timeoutMs,
         )
-        return { reconnected: true, device: fresh }
-      }
-      this.log(
-        'reconnect wait: auto-reconnect unavailable (module likely has no USB serial number)',
-      )
-      return { reconnected: false, device: null }
+        if (fresh) {
+          this.log(
+            `reconnected to fresh device (VID ${this.hex(fresh.vendorId)} PID ${this.hex(fresh.productId)})`,
+          )
+          return { reconnected: true, device: fresh }
+        }
+        this.log(
+          'reconnect wait: auto-reconnect unavailable (module likely has no USB serial number)',
+        )
+        return { reconnected: false, device: null }
+      })
     } catch (err) {
       const e = err instanceof Error ? err : new Error(String(err))
       ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')

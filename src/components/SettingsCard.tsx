@@ -4,6 +4,7 @@ import type { ModuleService } from '../services/ModuleService'
 import { ModuleComputerIllustration } from './icons'
 import { ModeSelect } from './ModeSelect'
 import { ModeSwitchDialog } from './ModeSwitchDialog'
+import { DeviceTelemetry } from './DeviceTelemetry'
 
 interface Props {
   device: USBDevice
@@ -67,13 +68,15 @@ export function SettingsCard({
     <div className="w-full flex flex-col items-center px-6">
       <ModuleComputerIllustration className="w-64 h-48 mb-8" />
 
-      <div className="w-full max-w-lg rounded-2xl bg-white shadow-sm">
+      <div className="w-full max-w-xl rounded-2xl bg-white shadow-sm">
         <div className="px-6 pt-5 pb-4 border-b border-gray-100">
           <h1 className="text-lg font-semibold text-gray-900">模块设置</h1>
           <p className="text-sm text-gray-600 opacity-50 mt-1">
             当前为标准 Quectel 设备标识
           </p>
         </div>
+
+        <DeviceTelemetry device={device} moduleService={moduleService} />
 
         <ul className="divide-y divide-gray-100">
           <li className="px-6 h-16 flex items-center justify-between">

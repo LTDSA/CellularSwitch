@@ -28,3 +28,40 @@ export type UsbnetMode = 'qmi' | 'ecm'
 export type SetUsbnetModeResult =
   | { reconnected: true; device: USBDevice }
   | { reconnected: false; device: null }
+
+/** 信号强度指示：由 AT+CSQ / AT+CPIN? 解析而来。 */
+export interface SignalInfo {
+  /** 信号档位 0-4；SIM 未就绪或 CSQ 不可用（rssi=99）时为 null。 */
+  bars: number | null
+  /** SIM 卡是否就绪（AT+CPIN? 返回 READY）。 */
+  simReady: boolean
+}
+
+/** 运行状态：由 AT+QNWINFO / AT+CREG? 解析而来；查询不到时字段值为占位符「—」。 */
+export interface RunningStatus {
+  /** 网络模式（如 LTE / WCDMA / GSM）。 */
+  networkMode: string
+  /** 频段（如 LTE BAND 1）。 */
+  band: string
+  /** 信道（如 100）。 */
+  channel: string
+  /** 注册状态（如 已注册（本地网络））。 */
+  registration: string
+  /** 信号强度（AT+CSQ + AT+CPIN?），供标题右侧图标指示。 */
+  signal: SignalInfo
+}
+
+/** 设备信息：由 AT+CGSN / AT+QCCID / AT+CIMI / AT+CNUM 解析而来。 */
+export interface DeviceInfo {
+  imei: string
+  iccid: string
+  imsi: string
+  /** 本机号码；SIM 未分配号码时为占位符「—」。 */
+  phoneNumber: string
+}
+
+/** 运行状态 + 设备信息，一次查询两条都拿到。 */
+export interface Telemetry {
+  running: RunningStatus
+  deviceInfo: DeviceInfo
+}

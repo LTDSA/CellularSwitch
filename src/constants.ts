@@ -24,3 +24,13 @@ export const AT_USBNET_ECM = 'AT+QCFG="usbnet",1'
 // 返回空、无法自动重连——此窗口只是给「有序列号的模块」留个尝试机会并给用户
 // 一个重启缓冲；超时由 UI 引导手动重新连接，不算切换失败。
 export const MODE_RECONNECT_WAIT_MS = 12_000
+
+// 运行状态 / 设备信息查询（均为只读指令，不改配置、不触发重启）。
+export const AT_QNWINFO = 'AT+QNWINFO' // 网络模式 + 频段 + 信道（+QNWINFO: "LTE","460 11",LTE BAND 1,100）
+export const AT_CREG = 'AT+CREG?' // 注册状态（+CREG: 0,1）
+export const AT_CGSN = 'AT+CGSN' // IMEI
+export const AT_QCCID = 'AT+QCCID' // ICCID（+QCCID: 8986…）
+export const AT_CIMI = 'AT+CIMI' // IMSI
+export const AT_CNUM = 'AT+CNUM' // 本机号码（+CNUM: 1,"138…",129,7,4）
+export const AT_CSQ = 'AT+CSQ' // 信号强度（+CSQ: <rssi>,<ber>）
+export const AT_CPIN = 'AT+CPIN?' // SIM 卡状态（+CPIN: READY / NOT INSERTED）
