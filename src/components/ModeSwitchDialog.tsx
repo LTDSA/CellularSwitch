@@ -117,7 +117,7 @@ export function ModeSwitchDialog({
           <>
             <h2 className="text-lg font-semibold text-gray-900 mb-2">切换成功</h2>
             <p className="text-sm text-gray-600 mb-5 leading-relaxed">
-              指令已发送并确认，模块正在重启。此模块未暴露 USB 序列号，浏览器无法在重启后自动重连。请等模块重启完成，点击「重新连接」查看新模式。
+              指令已发送并确认，请等待模块重启完成后，点击「重新连接」。
             </p>
             <div className="flex justify-end">
               <button
