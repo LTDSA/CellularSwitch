@@ -66,7 +66,8 @@ describe('ModuleService.applyConfig', () => {
     expect(usb.connect).toHaveBeenCalledWith(device)
     expect(usb.send).toHaveBeenCalledWith('AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0')
     expect(usb.send).toHaveBeenCalledWith('AT+CFUN=1,1')
-    expect(usb.close).toHaveBeenCalled()
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
   })
 
   it('sends restore command and waits for OK', async () => {
@@ -87,7 +88,8 @@ describe('ModuleService.applyConfig', () => {
     expect(usb.connect).toHaveBeenCalledWith(device)
     expect(usb.send).toHaveBeenCalledWith('AT+QCFG="usbcfg",0x2CA3,0x4006,1,1,1,1,1,0,0')
     expect(usb.send).toHaveBeenCalledWith('AT+CFUN=1,1')
-    expect(usb.close).toHaveBeenCalled()
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
   })
 
   it('throws a localized rejection when the module does not answer OK', async () => {
@@ -98,6 +100,134 @@ describe('ModuleService.applyConfig', () => {
 
     await expect(service.applyConfig(device, 'modified')).rejects.toThrow('Module rejected command')
 
-    expect(usb.close).toHaveBeenCalled()
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+})
+
+describe('ModuleService.queryUsbnetMode', () => {
+  it('parses usbnet=0 as qmi', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('AT+QCFG="usbnet"\r\n+QCFG: "usbnet",0\r\nOK')
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+
+    await expect(service.queryUsbnetMode(device)).resolves.toBe('qmi')
+
+    expect(usb.connect).toHaveBeenCalledWith(device)
+    expect(usb.send).toHaveBeenCalledWith('AT+QCFG="usbnet"')
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('parses usbnet=1 as ecm', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+QCFG: "usbnet",1\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryUsbnetMode(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe('ecm')
+  })
+
+  it('throws when the response cannot be parsed', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+QCFG: "foo",5\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryUsbnetMode(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow()
+
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+})
+
+describe('ModuleService.setUsbnetMode', () => {
+  it('sends ecm command, reboots, and returns the fresh device after reconnect', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+    const fresh = createMockDevice(0x2c7c, 0x0125)
+
+    const promise = service.setUsbnetMode(device, 'ecm', vi.fn())
+
+    await new Promise((r) => setTimeout(r, 10))
+    Object.assign(navigator.usb, {
+      getDevices: vi.fn().mockResolvedValue([fresh]),
+    })
+
+    const result = await promise
+
+    expect(result.reconnected).toBe(true)
+    expect(result.device).toBe(fresh)
+    expect(usb.connect).toHaveBeenCalledWith(device)
+    expect(usb.send).toHaveBeenCalledWith('AT+QCFG="usbnet",1')
+    expect(usb.send).toHaveBeenCalledWith('AT+CFUN=1,1')
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('sends qmi command when target is qmi', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+
+    const promise = service.setUsbnetMode(createMockDevice(0x2c7c, 0x0125), 'qmi')
+
+    await new Promise((r) => setTimeout(r, 10))
+    Object.assign(navigator.usb, {
+      getDevices: vi.fn().mockResolvedValue([createMockDevice(0x2c7c, 0x0125)]),
+    })
+
+    await promise
+
+    expect(usb.send).toHaveBeenCalledWith('AT+QCFG="usbnet",0')
+  })
+
+  it('calls onProgress with sending, waiting-reboot, reconnecting in order', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+    const steps: string[] = []
+    const onProgress = (s: string) => steps.push(s)
+
+    const promise = service.setUsbnetMode(createMockDevice(0x2c7c, 0x0125), 'ecm', onProgress)
+
+    await new Promise((r) => setTimeout(r, 10))
+    Object.assign(navigator.usb, {
+      getDevices: vi.fn().mockResolvedValue([createMockDevice(0x2c7c, 0x0125)]),
+    })
+
+    await promise
+
+    expect(steps).toEqual(['sending', 'waiting-reboot', 'reconnecting'])
+  })
+
+  it('returns reconnected:false when the module does not re-enumerate (switch still succeeded)', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+    Object.assign(navigator.usb, {
+      getDevices: vi.fn().mockResolvedValue([]),
+    })
+
+    // 传 30ms 超时，让测试不用等很久；首个轮询 tick（~1s）即超时。
+    // 切换指令已确认 OK，因此重连超时不算失败，而是返回 reconnected:false。
+    await expect(
+      service.setUsbnetMode(createMockDevice(0x2c7c, 0x0125), 'ecm', undefined, 30),
+    ).resolves.toEqual({ reconnected: false, device: null })
+  })
+
+  it('throws a localized rejection when the module rejects the command', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.setUsbnetMode(createMockDevice(0x2c7c, 0x0125), 'ecm'),
+    ).rejects.toThrow('Module rejected command')
   })
 })

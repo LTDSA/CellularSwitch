@@ -1,4 +1,4 @@
-import { READ_TIMEOUT_MS } from '../constants'
+import { READ_TIMEOUT_MS, ORIGINAL_VID, MODIFIED_VID } from '../constants'
 
 export class UsbService {
   private device: USBDevice | null = null
@@ -30,14 +30,33 @@ export class UsbService {
       throw new Error('WebUSB is not supported')
     }
     return navigator.usb.requestDevice({
-      filters: [{ vendorId: 0x2ca3 }, { vendorId: 0x2c7c }],
+      filters: [{ vendorId: ORIGINAL_VID }, { vendorId: MODIFIED_VID }],
     })
   }
 
-  async connect(device: USBDevice): Promise<void> {
-    this.device = device
+  /**
+   * 建立会话并定位 AT 接口。设计要点：
+   *
+   * - 刻意不主动 close()：此模块上 device.close() 不稳定（常抛「An operation that
+   *   changes the device state is in progress」），且失败的 close() 会污染缓存的
+   *   设备对象，导致后续所有操作报「Device not connected」。因此查询/切换流程保持
+   *   会话打开，靠 open()/claimInterface() 的幂等性（已打开/已 claim 直接 resolve）
+   *   复用会话；页面关闭或模块重启时由 Chrome 自动清理旧会话。
+   * - 自愈：模块的 USB 会话会间歇性掉线（传输报「Device not connected」），open()
+   *   每次都能重建句柄。这里依次尝试「传入对象 + getDevices() 中本模块的授权对象」，
+   *   取第一个能成功 open 的（open 失败说明对象已失效，重枚举后的新对象通常可用）。
+   */
+  async connect(
+    device: USBDevice,
+    opts?: {
+      probeSendTimeoutMs?: number
+      probeReadTimeoutMs?: number
+      failFast?: boolean
+    },
+  ): Promise<void> {
     this.diagnostics = []
-    await device.open()
+    device = await this.acquireUsable(device)
+    this.device = device
     if (device.configuration === null) {
       await device.selectConfiguration(1)
     }
@@ -111,13 +130,15 @@ export class UsbService {
       for (const inEp of inEps) {
         this.inEndpoint = inEp.endpointNumber
         try {
-          await this.send('AT')
+          // 重连就绪探测（failFast）用短超时，让启动中的模块快速失败；
+          // 正常连接沿用默认超时。
+          await this.send('AT', opts?.probeSendTimeoutMs ?? 2000)
           this.log(
             `iface ${iface.interfaceNumber} sent AT on OUT${this.outEndpoint}`,
           )
           // 累加式读取：模块会把回显(AT\r)和 OK 分两个 USB 传输发送，
           // 必须等到出现 OK/ERROR 为止（read() 内部累加）。
-          const response = await this.read(1500)
+          const response = await this.read(opts?.probeReadTimeoutMs ?? 1500)
           this.log(
             `iface ${iface.interfaceNumber} IN${inEp.endpointNumber} probe: ${JSON.stringify(response)}`,
           )
@@ -136,14 +157,16 @@ export class UsbService {
           this.log(
             `iface ${iface.interfaceNumber} IN${inEp.endpointNumber} probe failed: ${msg}`,
           )
+          // failFast：不逐个接口慢试，第一个接口探测失败即视为「未就绪」，
+          // 由调用方（重连就绪探测）稍后重试。同一模块 AT 口位置不变，安全。
+          if (opts?.failFast) throw err
           break
         }
       }
 
       if (found) return
 
-      // 用 releaseInterface（而非 close()）收尾：v1 已验证它即使有
-      // pending transfer 也只会 reject 而不会挂起；close() 则会挂起。
+      // 探测失败时释放该接口（失败不影响继续探测其他接口）。
       try {
         await device.releaseInterface(iface.interfaceNumber)
         this.log(`iface ${iface.interfaceNumber} released`)
@@ -209,6 +232,39 @@ export class UsbService {
     throw new Error('Timed out waiting for device response')
   }
 
+  /** 候选设备对象：传入对象 + getDevices() 中本模块的授权对象，按序去重。 */
+  private async deviceCandidates(device: USBDevice): Promise<USBDevice[]> {
+    const isOurs = (d: USBDevice) =>
+      d.vendorId === ORIGINAL_VID || d.vendorId === MODIFIED_VID
+    const list: USBDevice[] = [device]
+    try {
+      const devices = await navigator.usb.getDevices()
+      for (const d of devices) {
+        if (isOurs(d) && !list.includes(d)) list.push(d)
+      }
+    } catch {
+      // getDevices 失败（无授权/不支持）时只用传入对象。
+    }
+    return list
+  }
+
+  /** 依次尝试候选对象，返回第一个成功 open 的；全部失败则抛错。 */
+  private async acquireUsable(device: USBDevice): Promise<USBDevice> {
+    for (const candidate of await this.deviceCandidates(device)) {
+      try {
+        await candidate.open()
+        return candidate
+      } catch (err) {
+        this.log(
+          `open failed (session may be stale): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+      }
+    }
+    throw this.fail('无法建立设备会话，请拔出模块后重新插入再试')
+  }
+
   private withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('timeout')), ms)
@@ -225,16 +281,17 @@ export class UsbService {
     })
   }
 
+  /**
+   * 尽力收尾（应用卸载时调用）。此模块上 close() 可能失败并污染对象，
+   * 因此调用方不应依赖它；正常查询/切换流程刻意不调用，保持会话打开。
+   */
   async close(): Promise<void> {
     if (!this.device) return
     try {
-      for (const iface of this.device.configuration?.interfaces || []) {
-        await this.device.releaseInterface(iface.interfaceNumber)
-      }
+      await this.device.close()
     } catch {
-      // ignore release errors on disconnect
+      // 会话已失效或模块正在重启，忽略。
     }
-    await this.device.close()
     this.device = null
   }
 

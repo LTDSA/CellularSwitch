@@ -14,3 +14,13 @@ export const AT_CFUN = 'AT+CFUN=1,1'
 // connect 事件也不触发，检测实际无法成功；此值仅为给模块留出重启时间。
 export const RECONNECT_WAIT_MS = 8_000
 export const READ_TIMEOUT_MS = 5_000
+
+// 工作模式查询/切换（usbnet）。0=QMI，1=ECM；与 wlzh/dji-4g-vohive-mac 脚本一致。
+export const AT_USBNET_QUERY = 'AT+QCFG="usbnet"'
+export const AT_USBNET_QMI = 'AT+QCFG="usbnet",0'
+export const AT_USBNET_ECM = 'AT+QCFG="usbnet",1'
+// 模式切换后的尽力自动重连窗口。此模块（EG25-G）未暴露 USB 序列号，WebUSB
+// 授权只存临时 GUID（见 Chromium usb_chooser_context.cc），重启后 getDevices()
+// 返回空、无法自动重连——此窗口只是给「有序列号的模块」留个尝试机会并给用户
+// 一个重启缓冲；超时由 UI 引导手动重新连接，不算切换失败。
+export const MODE_RECONNECT_WAIT_MS = 12_000

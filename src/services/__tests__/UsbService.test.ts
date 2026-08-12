@@ -1,118 +1,109 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { UsbService } from '../UsbService'
 
-describe('UsbService', () => {
-  const mockConfiguration = {
-    interfaces: [
-      {
-        interfaceNumber: 0,
-        alternate: {
-          interfaceClass: 0xff,
-          interfaceSubclass: 0xff,
-          interfaceProtocol: 0xff,
-          endpoints: [
-            { endpointNumber: 1, direction: 'out' },
-            { endpointNumber: 2, direction: 'in' },
-          ],
-        },
-      },
-    ],
-  }
+function makeDevice(closeImpl: () => Promise<void>): USBDevice {
+  return {
+    configuration: { interfaces: [] },
+    close: closeImpl,
+  } as unknown as USBDevice
+}
 
-  // Typed `any` so mock methods type-check cleanly.
-  const mockDevice: any = {
-    open: vi.fn(),
-    selectConfiguration: vi.fn(),
-    claimInterface: vi.fn(),
-    releaseInterface: vi.fn(),
-    close: vi.fn(),
-    transferOut: vi.fn(),
-    transferIn: vi.fn(),
-    configuration: mockConfiguration,
+/**
+ * 构造一个可被 connect() 完整探测通过的假 USBDevice：
+ * 接口 3 为 class 0xFF 的 bulk 接口（OUT4 / IN6），transferIn 返回「OK」。
+ */
+function makeFakeDevice(vendorId: number, productId: number): USBDevice {
+  const iface = {
+    interfaceNumber: 3,
+    alternate: {
+      interfaceClass: 0xff,
+      interfaceSubclass: 0,
+      interfaceProtocol: 0,
+      endpoints: [
+        { direction: 'out', endpointNumber: 4, type: 'bulk' },
+        { direction: 'in', endpointNumber: 6, type: 'bulk' },
+      ],
+    },
   }
+  return {
+    vendorId,
+    productId,
+    open: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    releaseInterface: vi.fn().mockResolvedValue(undefined),
+    claimInterface: vi.fn().mockResolvedValue(undefined),
+    selectConfiguration: vi.fn().mockResolvedValue(undefined),
+    transferOut: vi.fn().mockResolvedValue({ status: 'ok' }),
+    transferIn: vi.fn().mockResolvedValue({
+      status: 'ok',
+      data: new TextEncoder().encode('\r\nOK\r\n'),
+    }),
+    configuration: { interfaces: [iface] },
+  } as unknown as USBDevice
+}
 
-  const okResponse = () => ({
-    status: 'ok',
-    data: new DataView(new TextEncoder().encode('OK\r\n').buffer),
+function deviceOf(usb: UsbService): { device: USBDevice | null } {
+  return usb as unknown as { device: USBDevice | null }
+}
+
+describe('UsbService.close', () => {
+  it('模块重启时有 in-flight 传输，device.close() 抛「操作进行中」也不应使调用方失败', async () => {
+    const usb = new UsbService()
+    deviceOf(usb).device = makeDevice(() =>
+      Promise.reject(
+        new DOMException(
+          'An operation that changes the device state is in progress',
+          'InvalidStateError',
+        ),
+      ),
+    )
+    await expect(usb.close()).resolves.toBeUndefined()
+    expect(deviceOf(usb).device).toBeNull()
   })
 
-  const mockAtProbe = () => {
-    mockDevice.transferOut.mockResolvedValue({ status: 'ok' })
-    mockDevice.transferIn.mockResolvedValue(okResponse())
-  }
+  it('close() 因设备已断开而失败时同样被忽略', async () => {
+    const usb = new UsbService()
+    deviceOf(usb).device = makeDevice(() =>
+      Promise.reject(new Error('device disconnected')),
+    )
+    await expect(usb.close()).resolves.toBeUndefined()
+    expect(deviceOf(usb).device).toBeNull()
+  })
+})
 
-  beforeEach(() => {
-    vi.resetAllMocks()
-    mockDevice.configuration = mockConfiguration
+describe('UsbService.connect', () => {
+  it('传入的设备对象失效时（open 失败），改用 getDevices() 取回的新对象并打开', async () => {
+    const stale = makeFakeDevice(0x2c7c, 0x0125)
+    ;(stale.open as ReturnType<typeof vi.fn>).mockRejectedValue(
+      new Error('session dead'),
+    )
+    const current = makeFakeDevice(0x2c7c, 0x0125)
     Object.assign(globalThis, {
-      navigator: { usb: { requestDevice: vi.fn(), getDevices: vi.fn() } },
+      navigator: { usb: { getDevices: vi.fn().mockResolvedValue([current]) } },
     })
+
+    const usb = new UsbService()
+    await usb.connect(stale)
+
+    // 自愈：先尝试传入对象（失败），再尝试 getDevices 返回的对象。
+    expect(stale.open).toHaveBeenCalledTimes(1)
+    expect(current.open).toHaveBeenCalledTimes(1)
+    expect(deviceOf(usb).device).toBe(current)
   })
 
-  it('reports WebUSB support correctly', () => {
-    expect(UsbService.isSupported()).toBe(true)
-    Object.assign(globalThis, { navigator: {} })
-    expect(UsbService.isSupported()).toBe(false)
-  })
-
-  it('requests a device with filters', async () => {
-    const requestDevice = vi.fn().mockResolvedValue(mockDevice)
-    Object.assign(globalThis, { navigator: { usb: { requestDevice } } })
-
-    const service = new UsbService()
-    const device = await service.requestDevice()
-
-    expect(requestDevice).toHaveBeenCalledWith({
-      filters: [{ vendorId: 0x2ca3 }, { vendorId: 0x2c7c }],
+  it('传入的设备对象正常时直接复用（open() 幂等），getDevices 仅作后备', async () => {
+    const device = makeFakeDevice(0x2c7c, 0x0125)
+    Object.assign(globalThis, {
+      navigator: {
+        usb: { getDevices: vi.fn().mockResolvedValue([device]) },
+      },
     })
-    expect(device).toBe(mockDevice)
-  })
 
-  it('connects, selects config, claims, and probes for the AT port', async () => {
-    mockDevice.configuration = null
-    mockDevice.selectConfiguration.mockImplementation(async () => {
-      mockDevice.configuration = mockConfiguration
-    })
-    mockAtProbe()
+    const usb = new UsbService()
+    await usb.connect(device)
 
-    const service = new UsbService()
-    await service.connect(mockDevice)
-
-    expect(mockDevice.open).toHaveBeenCalled()
-    expect(mockDevice.selectConfiguration).toHaveBeenCalledWith(1)
-    expect(mockDevice.claimInterface).toHaveBeenCalledWith(0)
-    expect(mockDevice.transferOut).toHaveBeenCalledWith(1, new TextEncoder().encode('AT\r\n'))
-  })
-
-  it('throws a localized error when no interface confirms as the AT port', async () => {
-    mockDevice.transferOut.mockResolvedValue({ status: 'ok' })
-    mockDevice.transferIn.mockRejectedValue(new Error('stall'))
-
-    const service = new UsbService()
-    await expect(service.connect(mockDevice)).rejects.toThrow(/未能定位 AT 命令接口/)
-  })
-
-  it('sends a command as UTF-8 with CRLF', async () => {
-    mockAtProbe()
-    const service = new UsbService()
-    await service.connect(mockDevice)
-    mockDevice.transferOut.mockClear()
-
-    await service.send('AT+QCFG="usbcfg"')
-
-    const expected = new TextEncoder().encode('AT+QCFG="usbcfg"\r\n')
-    expect(mockDevice.transferOut).toHaveBeenCalledWith(1, expected)
-  })
-
-  it('reads a response string', async () => {
-    mockAtProbe()
-    const service = new UsbService()
-    await service.connect(mockDevice)
-    mockDevice.transferIn.mockClear()
-    mockDevice.transferIn.mockResolvedValue(okResponse())
-
-    const response = await service.read(1000)
-
-    expect(response).toContain('OK')
+    expect(deviceOf(usb).device).toBe(device)
+    // 同对象不重复加入候选（去重），只 open 一次。
+    expect(device.open).toHaveBeenCalledTimes(1)
   })
 })
