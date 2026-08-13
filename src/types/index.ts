@@ -23,6 +23,9 @@ export type UsbnetMode = 'qmi' | 'ecm' | 'mbim' | 'rndis'
 /** 功能模式（AT+CFUN，设置电话功能级别）：0=最小功能，1=全功能，4=飞行模式。 */
 export type FuncMode = 0 | 1 | 4
 
+/** 网络制式（AT+QCFG="nwscanmode"）：0=自动，1=仅 GSM，2=仅 WCDMA，3=仅 LTE。 */
+export type NwScanMode = 0 | 1 | 2 | 3
+
 /**
  * usbnet 模式切换的结果。切换指令确认 OK 时即已成功；
  * reconnected 只表示「浏览器是否在重启后自动重连上了（用于刷新显示）」。

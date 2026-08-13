@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 import { LayoutGrid, MessageSquare } from 'lucide-react'
-import type { UsbnetMode, FuncMode, SetUsbnetModeResult } from '../types'
+import type { UsbnetMode, FuncMode, NwScanMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
 import { ModuleComputerIllustration } from './icons'
 import { ModeSelect } from './ModeSelect'
 import { FuncModeSelect } from './FuncModeSelect'
+import { NwScanModeSelect } from './NwScanModeSelect'
 import { ModeSwitchDialog } from './ModeSwitchDialog'
 import { DeviceTelemetry } from './DeviceTelemetry'
 import { SmsView } from './SmsView'
@@ -33,6 +34,9 @@ export function SettingsCard({
   const [funcMode, setFuncMode] = useState<FuncMode | null>(null)
   const [funcQueryState, setFuncQueryState] = useState<QueryState>('loading')
   const [funcError, setFuncError] = useState(false)
+  const [nwScanMode, setNwScanMode] = useState<NwScanMode | null>(null)
+  const [nwScanQueryState, setNwScanQueryState] = useState<QueryState>('loading')
+  const [nwScanError, setNwScanError] = useState(false)
   // 功能模式切换后射频状态改变，递增以触发运行状态重新查询。
   const [telemetryVersion, setTelemetryVersion] = useState(0)
   // 当前选项卡：概览（运行状态/设备信息/模式设置）或 短信。
@@ -79,6 +83,35 @@ export function SettingsCard({
       setTelemetryVersion((v) => v + 1)
     } catch {
       setFuncError(true)
+    }
+  }
+
+  const loadNwScanMode = useCallback(async () => {
+    setNwScanQueryState('loading')
+    try {
+      const m = await moduleService.queryNwScanMode(device)
+      setNwScanMode(m)
+      setNwScanQueryState('ready')
+    } catch {
+      setNwScanMode(null)
+      setNwScanQueryState('error')
+    }
+  }, [device, moduleService])
+
+  useEffect(() => {
+    loadNwScanMode()
+  }, [loadNwScanMode])
+
+  const handleNwScanSelect = async (target: NwScanMode) => {
+    if (target === nwScanMode) return
+    setNwScanError(false)
+    try {
+      await moduleService.setNwScanMode(device, target)
+      setNwScanMode(target)
+      // 网络制式变化会触发重新注册，刷新运行状态。
+      setTelemetryVersion((v) => v + 1)
+    } catch {
+      setNwScanError(true)
     }
   }
 
@@ -189,6 +222,31 @@ export function SettingsCard({
                 )}
                 {funcQueryState === 'ready' && funcMode !== null && (
                   <FuncModeSelect value={funcMode} onSelect={handleFuncSelect} />
+                )}
+              </li>
+
+              <li className="px-6 h-16 flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-sm text-gray-900 leading-tight">网络制式</span>
+                  {nwScanError ? (
+                    <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
+                  ) : (
+                    <span className="text-xs text-gray-400 mt-0.5">切换模式需重新注册网络</span>
+                  )}
+                </div>
+                {nwScanQueryState === 'loading' && (
+                  <span className="text-sm text-gray-400">读取中…</span>
+                )}
+                {nwScanQueryState === 'error' && (
+                  <button
+                    onClick={loadNwScanMode}
+                    className="text-sm text-gray-400 hover:text-gray-600"
+                  >
+                    读取失败 · 重试
+                  </button>
+                )}
+                {nwScanQueryState === 'ready' && nwScanMode !== null && (
+                  <NwScanModeSelect value={nwScanMode} onSelect={handleNwScanSelect} />
                 )}
               </li>
 

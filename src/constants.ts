@@ -14,6 +14,14 @@ export const AT_CFUN = 'AT+CFUN=1,1'
 // 与上方重启用 AT_CFUN（<rst>=1）不同，这里省略 <rst>（=0），切换后不触发复位。
 export const AT_CFUN_QUERY = 'AT+CFUN?'
 
+// 网络制式（AT+QCFG="nwscanmode"）查询/切换。0=自动，1=仅 GSM，2=仅 WCDMA，3=仅 LTE。
+// <effect>=1 表示立即生效（无需重启）；切换后模块会重新注册网络。
+export const AT_NWSCANMODE_QUERY = 'AT+QCFG="nwscanmode"'
+export const AT_NWSCANMODE_AUTO = 'AT+QCFG="nwscanmode",0,1'
+export const AT_NWSCANMODE_GSM = 'AT+QCFG="nwscanmode",1,1'
+export const AT_NWSCANMODE_WCDMA = 'AT+QCFG="nwscanmode",2,1'
+export const AT_NWSCANMODE_LTE = 'AT+QCFG="nwscanmode",3,1'
+
 // 指令成功后的尽力重连检测窗口。Chrome 在 VID/PID 变更后不保留权限，
 // connect 事件也不触发，检测实际无法成功；此值仅为给模块留出重启时间。
 export const RECONNECT_WAIT_MS = 8_000

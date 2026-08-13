@@ -509,6 +509,74 @@ describe('ModuleService.setFuncMode', () => {
   })
 })
 
+describe('ModuleService.queryNwScanMode', () => {
+  it('parses nwscanmode=3 as LTE only', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('AT+QCFG="nwscanmode"\r\n+QCFG: "nwscanmode",3\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryNwScanMode(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe(3)
+
+    expect(usb.send).toHaveBeenCalledWith('AT+QCFG="nwscanmode"')
+  })
+
+  it('parses nwscanmode=0 as automatic', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+QCFG: "nwscanmode",0\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryNwScanMode(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe(0)
+  })
+
+  it('throws when the response cannot be parsed', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryNwScanMode(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow()
+  })
+
+  it('rejects unsupported values like nwscanmode=5', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+QCFG: "nwscanmode",5\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryNwScanMode(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow('未知的网络制式: 5')
+  })
+})
+
+describe('ModuleService.setNwScanMode', () => {
+  it('sends AT+QCFG="nwscanmode",3,1 and waits for OK', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+
+    await service.setNwScanMode(createMockDevice(0x2c7c, 0x0125), 3)
+
+    expect(usb.send).toHaveBeenCalledWith('AT+QCFG="nwscanmode",3,1')
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('throws a localized rejection when the module rejects the command', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.setNwScanMode(createMockDevice(0x2c7c, 0x0125), 0),
+    ).rejects.toThrow('Module rejected command')
+  })
+})
+
 describe('ModuleService.listSms', () => {
   it('switches to PDU mode and parses a UCS2 incoming message', async () => {
     const usb = createMockUsb()

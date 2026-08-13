@@ -8,6 +8,11 @@ import {
   AT_RESTORE,
   AT_CFUN,
   AT_CFUN_QUERY,
+  AT_NWSCANMODE_QUERY,
+  AT_NWSCANMODE_AUTO,
+  AT_NWSCANMODE_GSM,
+  AT_NWSCANMODE_WCDMA,
+  AT_NWSCANMODE_LTE,
   AT_USBNET_QUERY,
   AT_USBNET_QMI,
   AT_USBNET_ECM,
@@ -30,6 +35,7 @@ import type {
   ModuleMode,
   UsbnetMode,
   FuncMode,
+  NwScanMode,
   SetUsbnetModeResult,
   RunningStatus,
   DeviceInfo,
@@ -52,6 +58,14 @@ const FUNC_MODE_COMMANDS: Record<FuncMode, string> = {
   0: 'AT+CFUN=0',
   1: 'AT+CFUN=1',
   4: 'AT+CFUN=4',
+}
+
+// 网络制式（AT+QCFG="nwscanmode",<n>,1）设置命令。<effect>=1 立即生效、无需重启。
+const NWSCANMODE_COMMANDS: Record<NwScanMode, string> = {
+  0: AT_NWSCANMODE_AUTO,
+  1: AT_NWSCANMODE_GSM,
+  2: AT_NWSCANMODE_WCDMA,
+  3: AT_NWSCANMODE_LTE,
 }
 
 /** 一条已解析的短信（含长短信分段信息，用于重组）。 */
@@ -251,6 +265,60 @@ export class ModuleService {
           await this.usb.send(FUNC_MODE_COMMANDS[target])
           const response = await this.usb.read()
           this.log(`cfun set response: ${JSON.stringify(response)}`)
+          if (!response.includes('OK')) {
+            throw new Error(`Module rejected command: ${response}`)
+          }
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 查询当前网络制式（AT+QCFG="nwscanmode"）。0=自动，1=仅 GSM，2=仅 WCDMA，3=仅 LTE。
+   * 与其它只读查询一致：connect 幂等、会话保持打开、失败自动重试一次。
+   */
+  async queryNwScanMode(device: USBDevice): Promise<NwScanMode> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(AT_NWSCANMODE_QUERY)
+          const response = await this.usb.read()
+          this.log(`nwscanmode query response: ${JSON.stringify(response)}`)
+          const match = response.match(/"nwscanmode",(\d+)/)
+          if (!match) {
+            throw new Error(`无法解析当前网络制式: ${response}`)
+          }
+          const value = Number(match[1])
+          if (value === 0 || value === 1 || value === 2 || value === 3) return value
+          throw new Error(`未知的网络制式: ${value}`)
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 设置网络制式（AT+QCFG="nwscanmode",<n>,1）。<effect>=1 立即生效、无需重启，
+   * 切换后模块重新注册网络（AT+CREG 短暂变为「正在搜索」）。确认 OK 即生效。
+   */
+  async setNwScanMode(device: USBDevice, target: NwScanMode): Promise<void> {
+    this.diagnostics = []
+    try {
+      await this.runExclusive(async () => {
+        await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(NWSCANMODE_COMMANDS[target])
+          const response = await this.usb.read()
+          this.log(`nwscanmode set response: ${JSON.stringify(response)}`)
           if (!response.includes('OK')) {
             throw new Error(`Module rejected command: ${response}`)
           }
