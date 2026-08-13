@@ -4,10 +4,19 @@
 
 纯网页实现，在 macOS / Linux 上免驱。
 
+> 在 Windows 上需要：
+>
+> - 下载并打开 [Zadig](https://zadig.akeo.ie/)，在 Options 菜单下勾选 List All Devices
+> - 选择模块 AT 口（Interface 3），将驱动替换为 WinUSB
+> - 修改模块标识后需要再操作一次
+
 ## 功能
 
 - 自动识别模块当前状态（原始 / 已修改）
 - 一键修改 / 恢复模块的 USB 设备标识
+- 查看运行状态：网络模式、频段、信道、注册状态、信号强度
+- 查看设备信息：IMEI、ICCID、IMSI、本机号码
+- 切换工作模式：QMI / ECM
 - 全程在浏览器内完成，支持 Chrome / Edge 桌面版
 
 ## 使用方法
