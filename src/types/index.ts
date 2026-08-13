@@ -33,6 +33,8 @@ export type SetUsbnetModeResult =
 export interface SignalInfo {
   /** 信号档位 0-4；SIM 未就绪或 CSQ 不可用（rssi=99）时为 null。 */
   bars: number | null
+  /** 精确信号强度（dBm），由 +CSQ 的 RSSI 换算；不可用（rssi=99 / SIM 未就绪）时为 null。 */
+  dbm: number | null
   /** SIM 卡是否就绪（AT+CPIN? 返回 READY）。 */
   simReady: boolean
 }

@@ -137,11 +137,11 @@ function Column({
   /** 传入时：标题右侧显示信号强度图标。仅「运行状态」列使用。 */
   signal?: SignalInfo
 }) {
-  // 信号图标悬停提示：信号不可用 / 信号强度 N/4（仅 SIM 就绪时渲染图标）。
+  // 信号图标悬停提示：直接显示精确 dBm（仅 SIM 就绪时渲染图标）。
   const signalLabel = signal
-    ? signal.bars === null
+    ? signal.dbm === null
       ? '信号不可用'
-      : `信号强度 ${signal.bars} / 4`
+      : `${signal.dbm} dBm`
     : undefined
 
   return (

@@ -171,7 +171,7 @@ describe('ModuleService.getTelemetry', () => {
       band: 'LTE BAND 1',
       channel: '100',
       registration: '已注册（本地网络）',
-      signal: { bars: 4, simReady: true },
+      signal: { bars: 4, dbm: -73, simReady: true },
     })
     expect(result.deviceInfo).toEqual({
       imei: '861234567890123',
@@ -210,7 +210,7 @@ describe('ModuleService.getTelemetry', () => {
       band: 'WCDMA 2100',
       channel: '10713',
       registration: '已注册（漫游）',
-      signal: { bars: 2, simReady: true },
+      signal: { bars: 2, dbm: -89, simReady: true },
     })
   })
 
@@ -232,7 +232,7 @@ describe('ModuleService.getTelemetry', () => {
 
     expect(result.deviceInfo.phoneNumber).toBe('—')
     // 手机号查询失败不影响信号强度解析。
-    expect(result.running.signal).toEqual({ bars: 4, simReady: true })
+    expect(result.running.signal).toEqual({ bars: 4, dbm: -73, simReady: true })
   })
 
   it('serializes concurrent queries so AT commands never interleave', async () => {
@@ -294,7 +294,7 @@ describe('ModuleService.getTelemetry', () => {
       band: '—',
       channel: '—',
       registration: '未注册',
-      signal: { bars: null, simReady: false },
+      signal: { bars: null, dbm: null, simReady: false },
     })
     expect(result.deviceInfo).toEqual({
       imei: '—',

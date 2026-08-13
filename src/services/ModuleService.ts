@@ -242,15 +242,18 @@ export class ModuleService {
 
     // +CSQ: <rssi>,<ber>；rssi=99 表示无法测量。
     const rssi = Number(csq.match(/\+CSQ:\s*(\d+)/)?.[1])
+    const measurable = simReady && Number.isFinite(rssi) && rssi !== 99
     let bars: number | null = null
-    if (Number.isFinite(rssi) && rssi !== 99 && simReady) {
+    if (measurable) {
       if (rssi === 0) bars = 0
       else if (rssi <= 9) bars = 1
       else if (rssi <= 14) bars = 2
       else if (rssi <= 19) bars = 3
       else bars = 4
     }
-    return { bars, simReady }
+    // 3GPP TS 27.007：+CSQ 的 RSSI 0 → -113 dBm，每 +1 → +2 dBm（31 → -51 dBm）。
+    const dbm = measurable ? -113 + rssi * 2 : null
+    return { bars, simReady, dbm }
   }
 
   /** 解析设备信息：IMEI/IMSI 取数字串，ICCID 来自 +QCCID:，本机号码来自 +CNUM 引号内。 */
