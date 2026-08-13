@@ -70,7 +70,9 @@ export function SettingsCard({
 
       <div className="w-full max-w-xl rounded-2xl bg-white shadow-sm">
         <div className="px-6 pt-5 pb-4 border-b border-gray-100">
-          <h1 className="text-lg font-semibold text-gray-900">模块设置</h1>
+          <h1 className="text-lg font-semibold text-gray-900">
+            {device.productName || '模块设置'}
+          </h1>
           <p className="text-sm text-gray-600 opacity-50 mt-1">
             当前为标准 Quectel 设备标识
           </p>
