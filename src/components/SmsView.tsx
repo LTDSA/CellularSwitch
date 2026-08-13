@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { MessageSquare } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { CircleAlert, Loader2, MessageSquare } from 'lucide-react'
 import type { SmsMessage } from '../types'
 import type { ModuleService } from '../services/ModuleService'
 import { SMS_REFRESH_MS } from '../constants'
@@ -76,18 +76,23 @@ export function SmsView({ device, moduleService }: Props) {
       <aside className="flex w-60 shrink-0 flex-col border-r border-gray-100">
         <div className="flex-1 overflow-y-auto">
           {loadState === 'loading' && (
-            <p className="p-4 text-sm text-gray-400">读取中…</p>
+            <ListHint
+              icon={<Loader2 className="size-8 animate-spin text-gray-300" />}
+              text="读取中…"
+            />
           )}
           {loadState === 'error' && (
-            <button
+            <ListHint
+              icon={<CircleAlert className="size-8 text-gray-300" />}
+              text="读取失败 · 重试"
               onClick={() => load()}
-              className="p-4 text-sm text-gray-400 hover:text-gray-600"
-            >
-              读取失败 · 重试
-            </button>
+            />
           )}
           {loadState === 'ready' && conversations.length === 0 && (
-            <p className="p-4 text-sm text-gray-400">暂无短信</p>
+            <ListHint
+              icon={<MessageSquare className="size-8 text-gray-300" />}
+              text="暂无短信"
+            />
           )}
           {loadState === 'ready' && (
             <ul className="divide-y divide-gray-100">
@@ -139,6 +144,37 @@ function EmptyState() {
         <p className="mt-2 text-sm text-gray-400">选择会话以查看详情</p>
       </div>
     </div>
+  )
+}
+
+/** 左侧会话列表的空/加载/失败占位：居中显示图标 + 文案（可选点击重试）。 */
+function ListHint({
+  icon,
+  text,
+  onClick,
+}: {
+  icon: ReactNode
+  text: string
+  onClick?: () => void
+}) {
+  const content = (
+    <>
+      {icon}
+      <p className="mt-2 text-sm text-gray-400">{text}</p>
+    </>
+  )
+  const classes =
+    'flex min-h-full w-full flex-col items-center justify-center p-4 text-center'
+  return onClick ? (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`${classes} transition-opacity hover:opacity-70`}
+    >
+      {content}
+    </button>
+  ) : (
+    <div className={classes}>{content}</div>
   )
 }
 
