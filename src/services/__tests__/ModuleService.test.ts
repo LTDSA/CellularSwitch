@@ -130,6 +130,16 @@ describe('ModuleService.queryUsbnetMode', () => {
     ).resolves.toBe('ecm')
   })
 
+  it('parses usbnet=2 as mbim', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+QCFG: "usbnet",2\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryUsbnetMode(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe('mbim')
+  })
+
   it('throws when the response cannot be parsed', async () => {
     const usb = createMockUsb()
     usb.read.mockResolvedValue('+QCFG: "foo",5\r\nOK')

@@ -1,15 +1,40 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ComponentType } from 'react'
 import { ChevronDown, Check } from 'lucide-react'
 import type { UsbnetMode } from '../types'
+import { AppleIcon, WindowsIcon, LinuxIcon } from './icons'
 
 interface Props {
   value: UsbnetMode
   onSelect: (mode: UsbnetMode) => void
 }
 
-const MODES: { value: UsbnetMode; label: string; description: string }[] = [
-  { value: 'qmi', label: 'QMI 模式', description: '供 VoHive 平台使用' },
-  { value: 'ecm', label: 'ECM 模式', description: '作为 4G 上网卡供 Mac 使用' },
+interface ModeSystem {
+  icon: ComponentType<{ className?: string }>
+  name: string
+  /** 覆盖图标尺寸。Linux 企鹅上下顶满 viewBox，视觉偏高，需单独缩小。 */
+  iconClassName?: string
+}
+
+const MODES: { value: UsbnetMode; label: string; systems: ModeSystem[] }[] = [
+  { value: 'qmi', label: 'QMI 模式', systems: [{ icon: LinuxIcon, name: 'Linux', iconClassName: 'size-[11px] translate-y-px' }] },
+  {
+    value: 'ecm',
+    label: 'ECM 模式',
+    systems: [
+      { icon: AppleIcon, name: 'macOS' },
+      { icon: AppleIcon, name: 'iOS' },
+      { icon: LinuxIcon, name: 'Linux', iconClassName: 'size-[11px] translate-y-px' },
+    ],
+  },
+  {
+    value: 'mbim',
+    label: 'MBIM 模式',
+    systems: [
+      { icon: WindowsIcon, name: 'Windows' },
+      { icon: LinuxIcon, name: 'Linux', iconClassName: 'size-[11px] translate-y-px' },
+    ],
+  },
 ]
 
 /**
@@ -142,8 +167,17 @@ export function ModeSelect({ value, onSelect }: Props) {
                   <span className="block truncate text-sm font-medium text-gray-900">
                     {m.label}
                   </span>
-                  <span className="block truncate text-xs text-gray-500">
-                    {m.description}
+                  <span className="flex items-center gap-1 text-xs text-gray-500">
+                    {m.systems.map((sys, i) => {
+                      const SysIcon = sys.icon
+                      return (
+                        <span key={sys.name} className="inline-flex items-center gap-1">
+                          {i > 0 && <span className="text-gray-400">/</span>}
+                          <SysIcon className={`shrink-0 ${sys.iconClassName ?? 'size-3'}`} />
+                          <span>{sys.name}</span>
+                        </span>
+                      )
+                    })}
                   </span>
                 </span>
                 {isSelected && (

@@ -18,7 +18,7 @@ export type ProcessingStep =
 
 export type ModuleMode = 'original' | 'modified' | 'unknown'
 
-export type UsbnetMode = 'qmi' | 'ecm'
+export type UsbnetMode = 'qmi' | 'ecm' | 'mbim'
 
 /**
  * usbnet 模式切换的结果。切换指令确认 OK 时即已成功；

@@ -121,11 +121,14 @@ describe('UsbService.connect', () => {
 
       const usb = new UsbService()
       const p = usb.connect(device)
+      // 先挂 rejection 断言，再推进计时器：否则 p 在 advanceTimers 期间
+      // 被 reject 时还没有 handler，会触发 Node 的 unhandled rejection 告警。
+      const rejection = expect(p).rejects.toThrow('WinUSB')
 
       // 推进超过连接步骤超时，触发 withTimeout 的拒绝。
       await vi.advanceTimersByTimeAsync(2500)
 
-      await expect(p).rejects.toThrow('WinUSB')
+      await rejection
       // 超时后尽力 close，终止底层挂起的 claim，避免刷新时残留请求。
       expect(device.close).toHaveBeenCalled()
     } finally {
