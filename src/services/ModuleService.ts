@@ -21,6 +21,8 @@ import {
   AT_CNUM,
   AT_CSQ,
   AT_CPIN,
+  AT_CMGF_PDU,
+  AT_CMGL_PDU,
   RECONNECT_WAIT_MS,
   MODE_RECONNECT_WAIT_MS,
 } from '../constants'
@@ -33,7 +35,10 @@ import type {
   DeviceInfo,
   Telemetry,
   SignalInfo,
+  SmsMessage,
+  SmsStatus,
 } from '../types'
+import { parsePdu, type ConcatInfo } from '../utils/pdu'
 
 const USBNET_COMMANDS: Record<UsbnetMode, string> = {
   qmi: AT_USBNET_QMI,
@@ -47,6 +52,11 @@ const FUNC_MODE_COMMANDS: Record<FuncMode, string> = {
   0: 'AT+CFUN=0',
   1: 'AT+CFUN=1',
   4: 'AT+CFUN=4',
+}
+
+/** 一条已解析的短信（含长短信分段信息，用于重组）。 */
+interface SmsPart extends SmsMessage {
+  concat: ConcatInfo | null
 }
 
 export class ModuleService {
@@ -405,6 +415,123 @@ export class ModuleService {
       ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
       throw e
     }
+  }
+
+  // --- 短信（3GPP TS 27.005，PDU 模式读取以解析 UDH 重组长短信）---
+
+  // PDU 模式（CMGF=0）是否已对当前设备配置。按设备对象身份缓存：
+  // 同一会话内只配置一次；设备重枚举会拿到新对象、模块回到文本模式，需重新配置。
+  private pduModeDevice: USBDevice | null = null
+
+  /** 确保当前设备处于短信 PDU 模式（幂等，按设备对象缓存）。 */
+  private async ensurePduMode(device: USBDevice): Promise<void> {
+    if (this.pduModeDevice === device) return
+    const cmgf = await this.sendAndRead(AT_CMGF_PDU)
+    if (!/OK/.test(cmgf)) {
+      throw new Error('无法配置短信 PDU 模式')
+    }
+    this.pduModeDevice = device
+  }
+
+  /**
+   * 列出全部短信（AT+CMGL=4，PDU 模式）。只读、幂等，失败可自动重试一次。
+   * 解析每条 PDU 并重组长短信：按「方向 + 号码 + 引用号」分组、按段号排序拼接。
+   */
+  async listSms(device: USBDevice): Promise<SmsMessage[]> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.ensurePduMode(device)
+          const raw = await this.sendAndRead(AT_CMGL_PDU)
+          this.log(`cmgl response: ${JSON.stringify(raw)}`)
+          return this.parsePduList(raw)
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  // PDU 模式下 AT+CMGL=4 的 stat 数值 → 状态文案。
+  private static readonly PDU_STATUS: Record<number, SmsStatus> = {
+    0: 'REC UNREAD',
+    1: 'REC READ',
+    2: 'STO UNSENT',
+    3: 'STO SENT',
+  }
+
+  /** 解析 AT+CMGL（PDU 模式）响应为短信数组，含长短信重组。 */
+  private parsePduList(raw: string): SmsMessage[] {
+    const parts: SmsPart[] = []
+    // 以 +CMGL: 切分记录：首段是命令回显，丢弃；每段首行是记录头，其余行是 PDU hex。
+    const records = raw.split(/\+CMGL:/).slice(1)
+    for (const rec of records) {
+      const lines = rec.split(/\r?\n/).map((l) => l.trim())
+      const header = lines[0] ?? ''
+      const headerMatch = header.match(/^(\d+)\s*,\s*(\d+)/)
+      if (!headerMatch) continue
+      const index = Number(headerMatch[1])
+      const status = ModuleService.PDU_STATUS[Number(headerMatch[2])]
+      if (!status) continue
+      const pduHex = lines
+        .slice(1)
+        .filter((l) => l.length > 0 && !/^(OK|ERROR)/.test(l))
+        .join('')
+        .replace(/\s+/g, '')
+      if (!pduHex) continue
+      const parsed = parsePdu(pduHex)
+      if (!parsed) continue
+      parts.push({
+        index,
+        status,
+        address: parsed.address,
+        direction: parsed.direction,
+        timestamp: parsed.timestamp,
+        text: parsed.text,
+        concat: parsed.concat,
+      })
+    }
+    return this.reassembleParts(parts)
+  }
+
+  /** 重组长短信：按「方向 + 号码 + 引用号」分组，段内按段号排序、正文拼接。 */
+  private reassembleParts(parts: SmsPart[]): SmsMessage[] {
+    const result: SmsMessage[] = []
+    const groups = new Map<string, SmsPart[]>()
+    for (const p of parts) {
+      if (p.concat && p.concat.total > 1) {
+        const key = `${p.direction} ${p.address} ${p.concat.ref}`
+        const arr = groups.get(key) ?? []
+        arr.push(p)
+        groups.set(key, arr)
+      } else {
+        result.push({
+          index: p.index,
+          status: p.status,
+          address: p.address,
+          direction: p.direction,
+          timestamp: p.timestamp,
+          text: p.text,
+        })
+      }
+    }
+    for (const arr of groups.values()) {
+      arr.sort((a, b) => (a.concat?.seq ?? 0) - (b.concat?.seq ?? 0))
+      const first = arr[0]
+      result.push({
+        index: Math.min(...arr.map((m) => m.index)),
+        status: first.status,
+        address: first.address,
+        direction: first.direction,
+        timestamp: first.timestamp,
+        text: arr.map((m) => m.text).join(''),
+      })
+    }
+    return result
   }
 
   /**

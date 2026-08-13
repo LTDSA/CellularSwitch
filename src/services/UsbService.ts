@@ -209,15 +209,18 @@ export class UsbService {
   }
 
   async send(command: string, timeoutMs = 2000): Promise<void> {
+    // AT 指令以 CRLF 结尾。
+    return this.sendRaw(command + '\r\n', timeoutMs)
+  }
+
+  /** 原样发送数据（不追加 CRLF）。用于短信正文——以 \x1A（Ctrl+Z）结尾。 */
+  async sendRaw(data: string, timeoutMs = 2000): Promise<void> {
     if (!this.device) throw new Error('Device not connected')
     const encoder = new TextEncoder()
     // 用 withTimeout 包裹：某些非 AT 接口的 OUT 端点会无限 NAK，
     // 不加超时会导致 transferOut 永久挂起。
     const result = await this.withTimeout(
-      this.device.transferOut(
-        this.outEndpoint,
-        encoder.encode(command + '\r\n'),
-      ),
+      this.device.transferOut(this.outEndpoint, encoder.encode(data)),
       timeoutMs,
     )
     if (result.status !== 'ok') {
@@ -226,6 +229,14 @@ export class UsbService {
   }
 
   async read(timeoutMs = READ_TIMEOUT_MS): Promise<string> {
+    return this.readUntil((buffer) => /OK|ERROR/.test(buffer), timeoutMs)
+  }
+
+  /** 累加式读取，直到 matcher(buffer) 为真；超时抛错。 */
+  async readUntil(
+    matcher: (buffer: string) => boolean,
+    timeoutMs = READ_TIMEOUT_MS,
+  ): Promise<string> {
     if (!this.device) throw new Error('Device not connected')
     const decoder = new TextDecoder()
     let buffer = ''
@@ -249,7 +260,7 @@ export class UsbService {
       this.log(
         `read IN${this.inEndpoint} (${bytes.byteLength} B): ${this.hexBytes(bytes)} | text: ${JSON.stringify(decoded)}`,
       )
-      if (/OK|ERROR/.test(buffer)) {
+      if (matcher(buffer)) {
         return buffer.trim()
       }
     }

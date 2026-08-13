@@ -44,6 +44,13 @@ export const AT_CNUM = 'AT+CNUM' // 本机号码（+CNUM: 1,"138…",129,7,4）
 export const AT_CSQ = 'AT+CSQ' // 信号强度（+CSQ: <rssi>,<ber>）
 export const AT_CPIN = 'AT+CPIN?' // SIM 卡状态（+CPIN: READY / NOT INSERTED）
 
+// 短信（3GPP TS 27.005）：PDU 模式读取，以便解析 UDH 重组长短信
+// （文本模式 AT+CMGL 不含分段信息，长短信会被拆成多条且顺序无保证）。
+export const AT_CMGF_PDU = 'AT+CMGF=0' // 短信 PDU 模式
+export const AT_CMGL_PDU = 'AT+CMGL=4' // PDU 模式列出全部短信（4=ALL）
+// 短信轮询间隔（仅「短信」选项卡挂载时运行）。
+export const SMS_REFRESH_MS = 5_000
+
 // 连接探测中 open/selectConfiguration/claimInterface 这类原生调用的超时。
 // Windows 上接口未绑定 WinUSB 驱动时，claimInterface 可能永久挂起（见
 // Chromium usb_device_handle_win.cc），加超时让探测快速失败而非卡死——

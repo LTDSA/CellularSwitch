@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { LayoutGrid, MessageSquare } from 'lucide-react'
 import type { UsbnetMode, FuncMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
 import { ModuleComputerIllustration } from './icons'
@@ -6,6 +7,7 @@ import { ModeSelect } from './ModeSelect'
 import { FuncModeSelect } from './FuncModeSelect'
 import { ModeSwitchDialog } from './ModeSwitchDialog'
 import { DeviceTelemetry } from './DeviceTelemetry'
+import { SmsView } from './SmsView'
 
 interface Props {
   device: USBDevice
@@ -33,6 +35,8 @@ export function SettingsCard({
   const [funcError, setFuncError] = useState(false)
   // 功能模式切换后射频状态改变，递增以触发运行状态重新查询。
   const [telemetryVersion, setTelemetryVersion] = useState(0)
+  // 当前选项卡：概览（运行状态/设备信息/模式设置）或 短信。
+  const [activeTab, setActiveTab] = useState<'overview' | 'sms'>('overview')
 
   const loadMode = useCallback(async () => {
     setQueryState('loading')
@@ -102,78 +106,107 @@ export function SettingsCard({
     <div className="w-full flex flex-col items-center px-6">
       <ModuleComputerIllustration className="w-64 h-48 mb-8" />
 
-      <div className="w-full max-w-xl rounded-2xl bg-white shadow-sm">
-        <div className="px-6 pt-5 pb-4 border-b border-gray-100">
+      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-sm">
+        <div className="px-6 pt-5 border-b border-gray-100">
           <h1 className="text-lg font-semibold text-gray-900">
             {device.productName || '模块设置'}
           </h1>
-          <p className="text-sm text-gray-600 opacity-50 mt-1">
-            当前为标准 Quectel 设备标识
-          </p>
+          <div className="mt-3 flex gap-1">
+            <button
+              type="button"
+              onClick={() => setActiveTab('overview')}
+              className={`-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'overview'
+                  ? 'border-brand text-brand'
+                  : 'border-transparent text-gray-500 hover:border-gray-200 hover:text-gray-700'
+              }`}
+            >
+              <LayoutGrid className="size-4" />
+              概览
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab('sms')}
+              className={`-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'sms'
+                  ? 'border-brand text-brand'
+                  : 'border-transparent text-gray-500 hover:border-gray-200 hover:text-gray-700'
+              }`}
+            >
+              <MessageSquare className="size-4" />
+              短信
+            </button>
+          </div>
         </div>
 
-        <DeviceTelemetry
-          device={device}
-          moduleService={moduleService}
-          refreshKey={telemetryVersion}
-        />
+        {activeTab === 'overview' ? (
+          <div className="flex h-[28rem] flex-col">
+            <DeviceTelemetry
+              device={device}
+              moduleService={moduleService}
+              refreshKey={telemetryVersion}
+            />
 
-        <ul className="divide-y divide-gray-100">
-          <li className="px-6 h-16 flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm text-gray-900 leading-tight">工作模式</span>
-              <span className="text-xs text-gray-400 mt-0.5">切换模式需重启模块</span>
-            </div>
-            {queryState === 'loading' && (
-              <span className="text-sm text-gray-400">读取中…</span>
-            )}
-            {queryState === 'error' && (
-              <button
-                onClick={loadMode}
-                className="text-sm text-gray-400 hover:text-gray-600"
-              >
-                读取失败 · 重试
-              </button>
-            )}
-            {queryState === 'ready' && mode && (
-              <ModeSelect value={mode} onSelect={handleSelect} />
-            )}
-          </li>
+            <ul className="divide-y divide-gray-100">
+              <li className="px-6 h-16 flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-sm text-gray-900 leading-tight">工作模式</span>
+                  <span className="text-xs text-gray-400 mt-0.5">切换模式需重启模块</span>
+                </div>
+                {queryState === 'loading' && (
+                  <span className="text-sm text-gray-400">读取中…</span>
+                )}
+                {queryState === 'error' && (
+                  <button
+                    onClick={loadMode}
+                    className="text-sm text-gray-400 hover:text-gray-600"
+                  >
+                    读取失败 · 重试
+                  </button>
+                )}
+                {queryState === 'ready' && mode && (
+                  <ModeSelect value={mode} onSelect={handleSelect} />
+                )}
+              </li>
 
-          <li className="px-6 h-16 flex items-center justify-between">
-            <div className="flex flex-col">
-              <span className="text-sm text-gray-900 leading-tight">功能模式</span>
-              {funcError && (
-                <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
-              )}
-            </div>
-            {funcQueryState === 'loading' && (
-              <span className="text-sm text-gray-400">读取中…</span>
-            )}
-            {funcQueryState === 'error' && (
-              <button
-                onClick={loadFuncMode}
-                className="text-sm text-gray-400 hover:text-gray-600"
-              >
-                读取失败 · 重试
-              </button>
-            )}
-            {funcQueryState === 'ready' && funcMode !== null && (
-              <FuncModeSelect value={funcMode} onSelect={handleFuncSelect} />
-            )}
-          </li>
+              <li className="px-6 h-16 flex items-center justify-between">
+                <div className="flex flex-col">
+                  <span className="text-sm text-gray-900 leading-tight">功能模式</span>
+                  {funcError && (
+                    <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
+                  )}
+                </div>
+                {funcQueryState === 'loading' && (
+                  <span className="text-sm text-gray-400">读取中…</span>
+                )}
+                {funcQueryState === 'error' && (
+                  <button
+                    onClick={loadFuncMode}
+                    className="text-sm text-gray-400 hover:text-gray-600"
+                  >
+                    读取失败 · 重试
+                  </button>
+                )}
+                {funcQueryState === 'ready' && funcMode !== null && (
+                  <FuncModeSelect value={funcMode} onSelect={handleFuncSelect} />
+                )}
+              </li>
 
-          <li>
-            {/* 底部两个角与卡片圆角对齐；不能给卡片加 overflow-hidden，那会裁掉工作模式下拉菜单。 */}
-            <button
-              onClick={onRestore}
-              className="w-full px-6 h-16 flex items-center justify-between rounded-b-2xl hover:bg-gray-50 transition-colors"
-            >
-              <span className="text-sm text-red-500">恢复设备标识</span>
-              <span className="text-xl text-gray-400 leading-none">›</span>
-            </button>
-          </li>
-        </ul>
+              <li>
+                {/* 底部两个角与卡片圆角对齐；不能给卡片加 overflow-hidden，那会裁掉工作模式下拉菜单。 */}
+                <button
+                  onClick={onRestore}
+                  className="w-full px-6 h-16 flex items-center justify-between rounded-b-2xl hover:bg-gray-50 transition-colors"
+                >
+                  <span className="text-sm text-red-500">恢复设备标识</span>
+                  <span className="text-xl text-gray-400 leading-none">›</span>
+                </button>
+              </li>
+            </ul>
+          </div>
+        ) : (
+          <SmsView device={device} moduleService={moduleService} />
+        )}
       </div>
 
       {switching && (

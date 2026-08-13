@@ -70,3 +70,21 @@ export interface Telemetry {
   running: RunningStatus
   deviceInfo: DeviceInfo
 }
+
+/** 短信状态（AT+CMGL 文本模式的 <stat> 字段）。 */
+export type SmsStatus = 'REC UNREAD' | 'REC READ' | 'STO UNSENT' | 'STO SENT'
+
+/** 一条短信，由 AT+CMGL 文本模式响应解析而来。 */
+export interface SmsMessage {
+  /** 存储区位置号（AT+CMGR/CMGD 用）。 */
+  index: number
+  status: SmsStatus
+  /** 对方号码（UCS2 解码后，如 +8613800138000）。 */
+  address: string
+  /** 收发方向：收件=incoming，发件=outgoing。 */
+  direction: 'incoming' | 'outgoing'
+  /** 时间戳字符串（模块原始格式，如 26/08/13,10:00:00+32）。 */
+  timestamp: string
+  /** 正文（UCS2 解码后）。 */
+  text: string
+}

@@ -508,3 +508,122 @@ describe('ModuleService.setFuncMode', () => {
     ).rejects.toThrow('Module rejected command')
   })
 })
+
+describe('ModuleService.listSms', () => {
+  it('switches to PDU mode and parses a UCS2 incoming message', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValueOnce('OK') // AT+CMGF=0
+    usb.read.mockResolvedValueOnce(
+      'AT+CMGL=4\r\n' +
+        '+CMGL: 1,0,,25\r\n' +
+        '00040D91683108108300F0000862803101000023044F60597D\r\n' +
+        'OK',
+    )
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+
+    const messages = await service.listSms(device)
+
+    expect(messages).toEqual([
+      {
+        index: 1,
+        status: 'REC UNREAD',
+        address: '+8613800138000',
+        direction: 'incoming',
+        timestamp: '26/08/13,10:00:00+32',
+        text: '你好',
+      },
+    ])
+    expect(usb.send).toHaveBeenCalledWith('AT+CMGF=0')
+    expect(usb.send).toHaveBeenCalledWith('AT+CMGL=4')
+    // 正常查询流程不调用 close()。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('reassembles concatenated segments in sequence order even if stored reversed', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValueOnce('OK') // AT+CMGF=0
+    // 段 2（seq=2）先存储（index 1），段 1（seq=1）后存储（index 2）。
+    usb.read.mockResolvedValueOnce(
+      'AT+CMGL=4\r\n' +
+        '+CMGL: 1,0,,31\r\n' +
+        '00440D91683108108300F00008628031010000230A0500030102026D4B8BD5\r\n' +
+        '+CMGL: 2,0,,35\r\n' +
+        '00440D91683108108300F00008628031010000230E0500030102014F60597D4E16754C\r\n' +
+        'OK',
+    )
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+
+    const messages = await service.listSms(device)
+
+    expect(messages).toEqual([
+      {
+        index: 1,
+        status: 'REC UNREAD',
+        address: '+8613800138000',
+        direction: 'incoming',
+        timestamp: '26/08/13,10:00:00+32',
+        text: '你好世界测试',
+      },
+    ])
+  })
+
+  it('parses a 7-bit ASCII incoming message', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValueOnce('OK')
+    usb.read.mockResolvedValueOnce(
+      'AT+CMGL=4\r\n' +
+        '+CMGL: 1,0,,26\r\n' +
+        '00040D91683108108300F000006280310100002305C8329BFD06\r\n' +
+        'OK',
+    )
+    const service = new ModuleService(usb)
+
+    const messages = await service.listSms(createMockDevice(0x2c7c, 0x0125))
+
+    expect(messages[0]).toMatchObject({
+      address: '+8613800138000',
+      direction: 'incoming',
+      text: 'Hello',
+    })
+  })
+
+  it('parses an outgoing SMS-SUBMIT message', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValueOnce('OK')
+    usb.read.mockResolvedValueOnce(
+      'AT+CMGL=4\r\n' +
+        '+CMGL: 3,3,,25\r\n' +
+        '00010005810180F6000005E8329BFD06\r\n' +
+        'OK',
+    )
+    const service = new ModuleService(usb)
+
+    const messages = await service.listSms(createMockDevice(0x2c7c, 0x0125))
+
+    expect(messages).toEqual([
+      {
+        index: 3,
+        status: 'STO SENT',
+        address: '10086',
+        direction: 'outgoing',
+        timestamp: '',
+        text: 'hello',
+      },
+    ])
+  })
+
+  it('configures PDU mode once per device', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+
+    await service.listSms(device)
+    await service.listSms(device)
+
+    const cmgfCalls = usb.send.mock.calls.filter((c: any[]) => c[0] === 'AT+CMGF=0')
+    expect(cmgfCalls).toHaveLength(1)
+  })
+})
