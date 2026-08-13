@@ -106,4 +106,30 @@ describe('UsbService.connect', () => {
     // 同对象不重复加入候选（去重），只 open 一次。
     expect(device.open).toHaveBeenCalledTimes(1)
   })
+
+  it('claimInterface 挂起（Windows 无驱动）时超时、close 并抛驱动提示，而非永久卡死', async () => {
+    vi.useFakeTimers()
+    try {
+      const device = makeFakeDevice(0x2c7c, 0x0125)
+      // 模拟 Windows 上接口未绑定 WinUSB 驱动时 claimInterface 永不返回。
+      ;(device.claimInterface as ReturnType<typeof vi.fn>).mockReturnValue(
+        new Promise(() => {}),
+      )
+      Object.assign(globalThis, {
+        navigator: { usb: { getDevices: vi.fn().mockResolvedValue([device]) } },
+      })
+
+      const usb = new UsbService()
+      const p = usb.connect(device)
+
+      // 推进超过连接步骤超时，触发 withTimeout 的拒绝。
+      await vi.advanceTimersByTimeAsync(2500)
+
+      await expect(p).rejects.toThrow('WinUSB')
+      // 超时后尽力 close，终止底层挂起的 claim，避免刷新时残留请求。
+      expect(device.close).toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

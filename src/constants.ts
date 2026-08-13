@@ -34,3 +34,9 @@ export const AT_CIMI = 'AT+CIMI' // IMSI
 export const AT_CNUM = 'AT+CNUM' // 本机号码（+CNUM: 1,"138…",129,7,4）
 export const AT_CSQ = 'AT+CSQ' // 信号强度（+CSQ: <rssi>,<ber>）
 export const AT_CPIN = 'AT+CPIN?' // SIM 卡状态（+CPIN: READY / NOT INSERTED）
+
+// 连接探测中 open/selectConfiguration/claimInterface 这类原生调用的超时。
+// Windows 上接口未绑定 WinUSB 驱动时，claimInterface 可能永久挂起（见
+// Chromium usb_device_handle_win.cc），加超时让探测快速失败而非卡死——
+// 否则挂起的原生调用在页面刷新时残留，触发浏览器崩溃。
+export const CONNECT_STEP_TIMEOUT_MS = 2_000

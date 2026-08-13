@@ -21,6 +21,17 @@ function App() {
   )
   const [pendingOperation, setPendingOperation] = useState<'modify' | 'restore' | null>(null)
 
+  // 页面卸载（刷新 / 关闭 / 导航离开）时主动关闭 USB 会话。设备处于异常
+  // 状态（如 Windows 下接口挂起）时，浏览器自动清理残留的 pending 传输 /
+  // 接口声明可能触发崩溃；卸载前主动 close() 尽力终止这些请求。
+  useEffect(() => {
+    const handlePageHide = () => {
+      usbService.close()
+    }
+    window.addEventListener('pagehide', handlePageHide)
+    return () => window.removeEventListener('pagehide', handlePageHide)
+  }, [])
+
   // 打开设备选择框并识别设备；用户取消或未识别时抛错，由调用方决定 UI。
   // 供初始连接与「重新连接」复用：只负责拿到设备，不直接改 App 状态。
   const connectDevice = useCallback(async (): Promise<USBDevice> => {

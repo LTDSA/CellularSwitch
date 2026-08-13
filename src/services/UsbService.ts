@@ -1,4 +1,9 @@
-import { READ_TIMEOUT_MS, ORIGINAL_VID, MODIFIED_VID } from '../constants'
+import {
+  READ_TIMEOUT_MS,
+  ORIGINAL_VID,
+  MODIFIED_VID,
+  CONNECT_STEP_TIMEOUT_MS,
+} from '../constants'
 
 export class UsbService {
   private device: USBDevice | null = null
@@ -58,7 +63,19 @@ export class UsbService {
     device = await this.acquireUsable(device)
     this.device = device
     if (device.configuration === null) {
-      await device.selectConfiguration(1)
+      // 原生调用也加超时：Windows 无驱动时可能挂起，超时快速失败而非卡死。
+      try {
+        await this.withTimeout(
+          device.selectConfiguration(1),
+          CONNECT_STEP_TIMEOUT_MS,
+        )
+      } catch (err) {
+        throw this.fail(
+          `无法配置设备接口（${
+            err instanceof Error ? err.message : String(err)
+          }），请确认已安装 WinUSB 驱动`,
+        )
+      }
     }
 
     // --- 诊断日志：输出设备与接口描述符 ---
@@ -114,14 +131,22 @@ export class UsbService {
 
       this.log(`=== probing iface ${iface.interfaceNumber} ===`)
       try {
-        await device.claimInterface(iface.interfaceNumber)
+        // Windows 上接口未绑定 WinUSB 驱动时 claimInterface 会永久挂起；
+        // 加超时使其快速失败。超时后底层 claim 仍在飞（无法取消），继续
+        // 探测下一接口会累积 orphan 请求，刷新页面时更易触发崩溃，故立即失败。
+        await this.withTimeout(
+          device.claimInterface(iface.interfaceNumber),
+          CONNECT_STEP_TIMEOUT_MS,
+        )
         this.log(`iface ${iface.interfaceNumber} claim OK`)
       } catch (err) {
-        this.log(
-          `iface ${iface.interfaceNumber} claim failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        )
+        const msg = err instanceof Error ? err.message : String(err)
+        this.log(`iface ${iface.interfaceNumber} claim failed: ${msg}`)
+        if (/timeout/i.test(msg)) {
+          // 尽力关闭以终止底层挂起的 claim，减少刷新时的残留请求。
+          await this.close()
+          throw this.fail('设备接口无响应，请确认已安装 WinUSB 驱动后重试')
+        }
         continue
       }
       this.outEndpoint = outEps[0]?.endpointNumber ?? 0
@@ -252,7 +277,7 @@ export class UsbService {
   private async acquireUsable(device: USBDevice): Promise<USBDevice> {
     for (const candidate of await this.deviceCandidates(device)) {
       try {
-        await candidate.open()
+        await this.withTimeout(candidate.open(), CONNECT_STEP_TIMEOUT_MS)
         return candidate
       } catch (err) {
         this.log(
