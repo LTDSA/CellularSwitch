@@ -15,9 +15,9 @@ export function ModuleComputerIllustration({ className = '' }: { className?: str
         strokeLinejoin="round"
       >
         {/* Mac display */}
-        <path d="M18 119V50a7 7 0 0 1 7-7h111a7 7 0 0 1 7 7v69" />
+        <path d="M18 119V45a7 7 0 0 1 7-7h111a7 7 0 0 1 7 7v74" />
         <path
-          d="M21 119V51a5 5 0 0 1 5-5h109a5 5 0 0 1 5 5v68"
+          d="M21 119V46a5 5 0 0 1 5-5h109a5 5 0 0 1 5 5v73"
           stroke="#a3a9b1"
           strokeWidth="1"
         />
@@ -30,25 +30,19 @@ export function ModuleComputerIllustration({ className = '' }: { className?: str
         />
         <path d="M68 119v1.5a3.5 3.5 0 0 0 3.5 3.5h17a3.5 3.5 0 0 0 3.5-3.5V119" />
 
-        {/* Type-C connector and cable */}
-        <rect
-          data-type-c-connector="true"
-          x="152"
-          y="120.5"
-          width="7"
-          height="4"
-          rx="1.2"
-          fill="#e5e7eb"
-        />
-        <path d="M159 122.5h10a7 7 0 0 0 7-7V76" />
+        {/* Cable leaves the complete Mac edge directly */}
+        <path data-direct-cable="true" d="M152 124h16a8 8 0 0 0 8-8V85" />
+
+        {/* Module connector */}
+        <rect x="173" y="78" width="6" height="7" rx="1" fill="#f1f2f4" />
 
         {/* 4G module */}
-        <rect x="164" y="18" width="24" height="58" rx="6" fill="#f3f4f5" />
+        <rect x="162" y="14" width="28" height="64" rx="6" fill="#f3f4f5" />
         <rect
-          x="166"
-          y="20"
-          width="20"
-          height="54"
+          x="164"
+          y="16"
+          width="24"
+          height="60"
           rx="4.5"
           stroke="#a3a9b1"
           strokeWidth="1"
@@ -60,7 +54,7 @@ export function ModuleComputerIllustration({ className = '' }: { className?: str
         <rect data-signal-bar="true" x="179" y="37" width="2" height="10" rx="1" fill="#9299a2" stroke="none" />
 
         {/* Status light */}
-        <circle data-status-light="true" cx="182.5" cy="68.5" r="1.8" fill="#22c55e" stroke="none" />
+        <circle data-status-light="true" cx="184" cy="70" r="1.8" fill="#22c55e" stroke="none" />
       </g>
     </svg>
   )
