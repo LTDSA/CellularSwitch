@@ -80,7 +80,10 @@ export function SettingsCard({
 
         <ul className="divide-y divide-gray-100">
           <li className="px-6 h-16 flex items-center justify-between">
-            <span className="text-sm text-gray-900">工作模式</span>
+            <div className="flex flex-col">
+              <span className="text-sm text-gray-900 leading-tight">工作模式</span>
+              <span className="text-xs text-gray-400 mt-0.5">切换模式后模块将重启</span>
+            </div>
             {queryState === 'loading' && (
               <span className="text-sm text-gray-400">读取中…</span>
             )}
