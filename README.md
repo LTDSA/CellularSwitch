@@ -1,6 +1,8 @@
 # CellularSwitch
 
-在浏览器里，利用 WebUSB 一键修改 4G 模块的 USB 设备标识（VID/PID）。纯网页实现，无需安装驱动或软件。
+在浏览器里利用 WebUSB 一键修改 4G 模块的 USB 设备标识（VID/PID）。
+
+纯网页实现，在 macOS / Linux 上免驱。
 
 ## 功能
 
