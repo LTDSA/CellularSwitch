@@ -14,7 +14,12 @@ const stepText: Record<ProcessingStep, string> = {
 
 export function ProcessingScreen({ operation, step }: Props) {
   return (
-    <div className="flex flex-col items-center text-center px-6">
+    <div
+      className="flex flex-col items-center text-center px-6"
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+    >
       <ProgressRing className="w-32 h-32 mb-8" />
       <h1 className="text-2xl font-semibold text-gray-900 mb-2">
         {operation === 'modify' ? '正在修改设备标识' : '正在恢复设备标识'}
