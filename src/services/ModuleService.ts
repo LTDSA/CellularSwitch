@@ -11,6 +11,7 @@ import {
   AT_USBNET_QMI,
   AT_USBNET_ECM,
   AT_USBNET_MBIM,
+  AT_USBNET_RNDIS,
   AT_QNWINFO,
   AT_CREG,
   AT_CGSN,
@@ -31,6 +32,13 @@ import type {
   Telemetry,
   SignalInfo,
 } from '../types'
+
+const USBNET_COMMANDS: Record<UsbnetMode, string> = {
+  qmi: AT_USBNET_QMI,
+  ecm: AT_USBNET_ECM,
+  mbim: AT_USBNET_MBIM,
+  rndis: AT_USBNET_RNDIS,
+}
 
 export class ModuleService {
   private diagnostics: string[] = []
@@ -150,7 +158,7 @@ export class ModuleService {
     }
   }
 
-  /** 查询当前 usbnet 工作模式：0=QMI，1=ECM，2=MBIM。失败抛带 diagnostics 的错误。 */
+  /** 查询当前 usbnet 工作模式：0=QMI，1=ECM，2=MBIM，3=RNDIS。失败抛带 diagnostics 的错误。 */
   async queryUsbnetMode(device: USBDevice): Promise<UsbnetMode> {
     this.diagnostics = []
     try {
@@ -171,6 +179,7 @@ export class ModuleService {
           if (value === 0) return 'qmi'
           if (value === 1) return 'ecm'
           if (value === 2) return 'mbim'
+          if (value === 3) return 'rndis'
           throw new Error(`未知的 usbnet 模式: ${value}`)
         })
       })
@@ -311,7 +320,7 @@ export class ModuleService {
   }
 
   /**
-   * 切换工作模式（QMI/ECM/MBIM）。发送 usbnet 指令 → 确认 OK → 软重启 → 等待重连。
+   * 切换工作模式（QMI/ECM/MBIM/RNDIS）。发送 usbnet 指令 → 确认 OK → 软重启 → 等待重连。
    * usbnet 不变更 VID/PID，Chrome 保留授权，因此能真正检测到重连；
    * 重连成功后返回重新枚举的新设备对象（旧对象已失效）。
    */
@@ -322,12 +331,7 @@ export class ModuleService {
     timeoutMs: number = MODE_RECONNECT_WAIT_MS,
   ): Promise<SetUsbnetModeResult> {
     this.diagnostics = []
-    const command =
-      target === 'qmi'
-        ? AT_USBNET_QMI
-        : target === 'ecm'
-          ? AT_USBNET_ECM
-          : AT_USBNET_MBIM
+    const command = USBNET_COMMANDS[target]
 
     try {
       // 放入 runExclusive：切换过程中模块重启，期间的其他查询不应在同一

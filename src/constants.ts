@@ -20,6 +20,7 @@ export const AT_USBNET_QUERY = 'AT+QCFG="usbnet"'
 export const AT_USBNET_QMI = 'AT+QCFG="usbnet",0'
 export const AT_USBNET_ECM = 'AT+QCFG="usbnet",1'
 export const AT_USBNET_MBIM = 'AT+QCFG="usbnet",2'
+export const AT_USBNET_RNDIS = 'AT+QCFG="usbnet",3'
 // 模式切换后的尽力自动重连窗口。此模块（EG25-G）未暴露 USB 序列号，WebUSB
 // 授权只存临时 GUID（见 Chromium usb_chooser_context.cc），重启后 getDevices()
 // 返回空、无法自动重连——此窗口只是给「有序列号的模块」留个尝试机会并给用户

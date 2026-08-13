@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ComponentType } from 'react'
 import { ChevronDown, Check } from 'lucide-react'
 import type { UsbnetMode } from '../types'
@@ -35,6 +35,14 @@ const MODES: { value: UsbnetMode; label: string; systems: ModeSystem[] }[] = [
       { icon: LinuxIcon, name: 'Linux', iconClassName: 'size-[11px] translate-y-px' },
     ],
   },
+  {
+    value: 'rndis',
+    label: 'RNDIS 模式',
+    systems: [
+      { icon: WindowsIcon, name: 'Windows' },
+      { icon: LinuxIcon, name: 'Linux', iconClassName: 'size-[11px] translate-y-px' },
+    ],
+  },
 ]
 
 /**
@@ -45,8 +53,10 @@ const MODES: { value: UsbnetMode; label: string; systems: ModeSystem[] }[] = [
 export function ModeSelect({ value, onSelect }: Props) {
   const [open, setOpen] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
+  const [direction, setDirection] = useState<'down' | 'up'>('down')
   const rootRef = useRef<HTMLDivElement>(null)
   const triggerRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
   const itemRefs = useRef<(HTMLButtonElement | null)[]>([])
 
   const selectedIndex = MODES.findIndex((m) => m.value === value)
@@ -68,6 +78,23 @@ export function ModeSelect({ value, onSelect }: Props) {
     }
     wasOpenRef.current = open
   }, [open, selectedIndex])
+
+  // 打开时按下方剩余空间决定向上/向下弹出，避免菜单被视口底部遮挡。
+  // useLayoutEffect 在 DOM 提交后、浏览器绘制前同步执行，方向在首帧即确定，无闪烁。
+  useLayoutEffect(() => {
+    if (!open) return
+    const trigger = triggerRef.current
+    const menu = menuRef.current
+    if (!trigger || !menu) return
+    const triggerRect = trigger.getBoundingClientRect()
+    const menuHeight = menu.getBoundingClientRect().height
+    const spaceBelow = window.innerHeight - triggerRect.bottom
+    const spaceAbove = triggerRect.top
+    const margin = 8
+    setDirection(
+      spaceBelow < menuHeight + margin && spaceAbove > spaceBelow ? 'up' : 'down',
+    )
+  }, [open])
 
   // 点击外部或 Esc 关闭菜单。
   useEffect(() => {
@@ -144,8 +171,11 @@ export function ModeSelect({ value, onSelect }: Props) {
 
       {open && (
         <div
+          ref={menuRef}
           role="menu"
-          className="absolute right-0 z-10 mt-1 w-64 rounded-xl bg-white p-1.5 shadow-lg ring-1 ring-black/5"
+          className={`absolute right-0 z-10 w-64 rounded-xl bg-white p-1.5 shadow-lg ring-1 ring-black/5 ${
+            direction === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
+          }`}
         >
           {MODES.map((m, i) => {
             const isSelected = m.value === value

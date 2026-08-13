@@ -25,6 +25,13 @@ const stepMeta: Record<Step, string> = {
   reconnecting: '等待设备重启',
 }
 
+const MODE_NAMES: Record<UsbnetMode, string> = {
+  qmi: 'QMI',
+  ecm: 'ECM',
+  mbim: 'MBIM',
+  rndis: 'RNDIS',
+}
+
 export function ModeSwitchDialog({
   device,
   target,
@@ -98,7 +105,7 @@ export function ModeSwitchDialog({
     }
   }
 
-  const modeName = target === 'qmi' ? 'QMI' : target === 'ecm' ? 'ECM' : 'MBIM'
+  const modeName = MODE_NAMES[target]
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-6">
