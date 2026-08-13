@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { UsbnetMode, SetUsbnetModeResult } from '../types'
+import type { UsbnetMode, FuncMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
 import { ModuleComputerIllustration } from './icons'
 import { ModeSelect } from './ModeSelect'
+import { FuncModeSelect } from './FuncModeSelect'
 import { ModeSwitchDialog } from './ModeSwitchDialog'
 import { DeviceTelemetry } from './DeviceTelemetry'
 
@@ -27,6 +28,9 @@ export function SettingsCard({
   const [mode, setMode] = useState<UsbnetMode | null>(null)
   const [queryState, setQueryState] = useState<QueryState>('loading')
   const [switching, setSwitching] = useState<UsbnetMode | null>(null)
+  const [funcMode, setFuncMode] = useState<FuncMode | null>(null)
+  const [funcQueryState, setFuncQueryState] = useState<QueryState>('loading')
+  const [funcError, setFuncError] = useState(false)
 
   const loadMode = useCallback(async () => {
     setQueryState('loading')
@@ -43,6 +47,33 @@ export function SettingsCard({
   useEffect(() => {
     loadMode()
   }, [loadMode])
+
+  const loadFuncMode = useCallback(async () => {
+    setFuncQueryState('loading')
+    try {
+      const m = await moduleService.queryFuncMode(device)
+      setFuncMode(m)
+      setFuncQueryState('ready')
+    } catch {
+      setFuncMode(null)
+      setFuncQueryState('error')
+    }
+  }, [device, moduleService])
+
+  useEffect(() => {
+    loadFuncMode()
+  }, [loadFuncMode])
+
+  const handleFuncSelect = async (target: FuncMode) => {
+    if (target === funcMode) return
+    setFuncError(false)
+    try {
+      await moduleService.setFuncMode(device, target)
+      setFuncMode(target)
+    } catch {
+      setFuncError(true)
+    }
+  }
 
   const handleSelect = (target: UsbnetMode) => {
     if (target === mode) return
@@ -84,7 +115,7 @@ export function SettingsCard({
           <li className="px-6 h-16 flex items-center justify-between">
             <div className="flex flex-col">
               <span className="text-sm text-gray-900 leading-tight">工作模式</span>
-              <span className="text-xs text-gray-400 mt-0.5">切换模式后模块将重启</span>
+              <span className="text-xs text-gray-400 mt-0.5">切换模式需重启模块</span>
             </div>
             {queryState === 'loading' && (
               <span className="text-sm text-gray-400">读取中…</span>
@@ -99,6 +130,29 @@ export function SettingsCard({
             )}
             {queryState === 'ready' && mode && (
               <ModeSelect value={mode} onSelect={handleSelect} />
+            )}
+          </li>
+
+          <li className="px-6 h-16 flex items-center justify-between">
+            <div className="flex flex-col">
+              <span className="text-sm text-gray-900 leading-tight">功能模式</span>
+              {funcError && (
+                <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
+              )}
+            </div>
+            {funcQueryState === 'loading' && (
+              <span className="text-sm text-gray-400">读取中…</span>
+            )}
+            {funcQueryState === 'error' && (
+              <button
+                onClick={loadFuncMode}
+                className="text-sm text-gray-400 hover:text-gray-600"
+              >
+                读取失败 · 重试
+              </button>
+            )}
+            {funcQueryState === 'ready' && funcMode !== null && (
+              <FuncModeSelect value={funcMode} onSelect={handleFuncSelect} />
             )}
           </li>
 

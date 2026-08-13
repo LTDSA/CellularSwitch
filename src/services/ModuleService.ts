@@ -7,6 +7,7 @@ import {
   AT_MODIFY,
   AT_RESTORE,
   AT_CFUN,
+  AT_CFUN_QUERY,
   AT_USBNET_QUERY,
   AT_USBNET_QMI,
   AT_USBNET_ECM,
@@ -26,6 +27,7 @@ import {
 import type {
   ModuleMode,
   UsbnetMode,
+  FuncMode,
   SetUsbnetModeResult,
   RunningStatus,
   DeviceInfo,
@@ -38,6 +40,13 @@ const USBNET_COMMANDS: Record<UsbnetMode, string> = {
   ecm: AT_USBNET_ECM,
   mbim: AT_USBNET_MBIM,
   rndis: AT_USBNET_RNDIS,
+}
+
+// 功能模式（AT+CFUN）设置命令。省略 <rst>（=0），切换后不触发复位/重枚举。
+const FUNC_MODE_COMMANDS: Record<FuncMode, string> = {
+  0: 'AT+CFUN=0',
+  1: 'AT+CFUN=1',
+  4: 'AT+CFUN=4',
 }
 
 export class ModuleService {
@@ -181,6 +190,60 @@ export class ModuleService {
           if (value === 2) return 'mbim'
           if (value === 3) return 'rndis'
           throw new Error(`未知的 usbnet 模式: ${value}`)
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 查询当前功能模式（AT+CFUN?）。0=最小功能，1=全功能，4=飞行模式。
+   * 与其它只读查询一致：connect 幂等、会话保持打开、失败自动重试一次。
+   */
+  async queryFuncMode(device: USBDevice): Promise<FuncMode> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(AT_CFUN_QUERY)
+          const response = await this.usb.read()
+          this.log(`cfun query response: ${JSON.stringify(response)}`)
+          const match = response.match(/\+CFUN:\s*(\d+)/)
+          if (!match) {
+            throw new Error(`无法解析当前功能模式: ${response}`)
+          }
+          const value = Number(match[1])
+          if (value === 0 || value === 1 || value === 4) return value
+          throw new Error(`未知的功能模式: ${value}`)
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 设置功能模式（AT+CFUN=<n>，0/1/4）。省略 <rst>（=0），模块不重启、不重枚举，
+   * 因此无需像 usbnet 切换那样等待重连；确认 OK 即生效。
+   */
+  async setFuncMode(device: USBDevice, target: FuncMode): Promise<void> {
+    this.diagnostics = []
+    try {
+      await this.runExclusive(async () => {
+        await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(FUNC_MODE_COMMANDS[target])
+          const response = await this.usb.read()
+          this.log(`cfun set response: ${JSON.stringify(response)}`)
+          if (!response.includes('OK')) {
+            throw new Error(`Module rejected command: ${response}`)
+          }
         })
       })
     } catch (err) {

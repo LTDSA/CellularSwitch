@@ -10,6 +10,10 @@ export const AT_RESTORE = 'AT+QCFG="usbcfg",0x2CA3,0x4006,1,1,1,1,1,0,0'
 // usbcfg 后需软重启使新 USB 身份生效。
 export const AT_CFUN = 'AT+CFUN=1,1'
 
+// 功能模式（AT+CFUN）查询。设置命令见 ModuleService 的 FUNC_MODE_COMMANDS。
+// 与上方重启用 AT_CFUN（<rst>=1）不同，这里省略 <rst>（=0），切换后不触发复位。
+export const AT_CFUN_QUERY = 'AT+CFUN?'
+
 // 指令成功后的尽力重连检测窗口。Chrome 在 VID/PID 变更后不保留权限，
 // connect 事件也不触发，检测实际无法成功；此值仅为给模块留出重启时间。
 export const RECONNECT_WAIT_MS = 8_000

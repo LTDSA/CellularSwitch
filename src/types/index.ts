@@ -20,6 +20,9 @@ export type ModuleMode = 'original' | 'modified' | 'unknown'
 
 export type UsbnetMode = 'qmi' | 'ecm' | 'mbim' | 'rndis'
 
+/** 功能模式（AT+CFUN，设置电话功能级别）：0=最小功能，1=全功能，4=飞行模式。 */
+export type FuncMode = 0 | 1 | 4
+
 /**
  * usbnet 模式切换的结果。切换指令确认 OK 时即已成功；
  * reconnected 只表示「浏览器是否在重启后自动重连上了（用于刷新显示）」。

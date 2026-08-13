@@ -412,3 +412,71 @@ describe('ModuleService.setUsbnetMode', () => {
     ).rejects.toThrow('Module rejected command')
   })
 })
+
+describe('ModuleService.queryFuncMode', () => {
+  it('parses +CFUN: 1 as full functionality', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('AT+CFUN?\r\n+CFUN: 1\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryFuncMode(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe(1)
+
+    expect(usb.send).toHaveBeenCalledWith('AT+CFUN?')
+  })
+
+  it('parses +CFUN: 4 as flight mode', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+CFUN: 4\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryFuncMode(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe(4)
+  })
+
+  it('throws when the response cannot be parsed', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryFuncMode(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow()
+  })
+
+  it('rejects unsupported values like +CFUN: 2', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+CFUN: 2\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryFuncMode(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow('未知的功能模式: 2')
+  })
+})
+
+describe('ModuleService.setFuncMode', () => {
+  it('sends AT+CFUN=4 and waits for OK', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+
+    await service.setFuncMode(createMockDevice(0x2c7c, 0x0125), 4)
+
+    expect(usb.send).toHaveBeenCalledWith('AT+CFUN=4')
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('throws a localized rejection when the module rejects the command', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.setFuncMode(createMockDevice(0x2c7c, 0x0125), 0),
+    ).rejects.toThrow('Module rejected command')
+  })
+})
