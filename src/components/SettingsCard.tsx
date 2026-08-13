@@ -31,6 +31,8 @@ export function SettingsCard({
   const [funcMode, setFuncMode] = useState<FuncMode | null>(null)
   const [funcQueryState, setFuncQueryState] = useState<QueryState>('loading')
   const [funcError, setFuncError] = useState(false)
+  // 功能模式切换后射频状态改变，递增以触发运行状态重新查询。
+  const [telemetryVersion, setTelemetryVersion] = useState(0)
 
   const loadMode = useCallback(async () => {
     setQueryState('loading')
@@ -70,6 +72,7 @@ export function SettingsCard({
     try {
       await moduleService.setFuncMode(device, target)
       setFuncMode(target)
+      setTelemetryVersion((v) => v + 1)
     } catch {
       setFuncError(true)
     }
@@ -109,7 +112,11 @@ export function SettingsCard({
           </p>
         </div>
 
-        <DeviceTelemetry device={device} moduleService={moduleService} />
+        <DeviceTelemetry
+          device={device}
+          moduleService={moduleService}
+          refreshKey={telemetryVersion}
+        />
 
         <ul className="divide-y divide-gray-100">
           <li className="px-6 h-16 flex items-center justify-between">

@@ -164,6 +164,34 @@ describe('ModuleService.queryUsbnetMode', () => {
   })
 })
 
+describe('ModuleService.getRunningStatus', () => {
+  it('queries only running-status commands and parses them', async () => {
+    const usb = createMockUsb()
+    ;[
+      '+QNWINFO: "LTE","460 11",LTE BAND 1,100\r\nOK',
+      '+CREG: 0,1\r\nOK',
+      '+CSQ: 20,0\r\nOK',
+      '+CPIN: READY\r\nOK',
+    ].forEach((r) => usb.read.mockResolvedValueOnce(r))
+    const service = new ModuleService(usb)
+
+    const running = await service.getRunningStatus(
+      createMockDevice(0x2c7c, 0x0125),
+    )
+
+    expect(running).toEqual({
+      networkMode: 'LTE',
+      band: 'LTE BAND 1',
+      channel: '100',
+      registration: '已注册（本地网络）',
+      signal: { bars: 4, dbm: -73, simReady: true },
+    })
+    // 只发 4 条运行状态指令，不含设备信息（IMEI/ICCID/IMSI/号码）。
+    const sent = usb.send.mock.calls.map((c: any[]) => c[0])
+    expect(sent).toEqual(['AT+QNWINFO', 'AT+CREG?', 'AT+CSQ', 'AT+CPIN?'])
+  })
+})
+
 describe('ModuleService.getTelemetry', () => {
   // connect() 在测试里是 mock（不真正探测 AT），所以按顺序喂 8 条查询应答。
   const feedResponses = (usb: any, responses: string[]) => {

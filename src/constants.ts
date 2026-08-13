@@ -19,6 +19,9 @@ export const AT_CFUN_QUERY = 'AT+CFUN?'
 export const RECONNECT_WAIT_MS = 8_000
 export const READ_TIMEOUT_MS = 5_000
 
+// 运行状态定时刷新间隔（静默刷新，不闪「读取中」）。
+export const TELEMETRY_REFRESH_MS = 5_000
+
 // 工作模式查询/切换（usbnet）。0=QMI，1=ECM；与 wlzh/dji-4g-vohive-mac 脚本一致。
 export const AT_USBNET_QUERY = 'AT+QCFG="usbnet"'
 export const AT_USBNET_QMI = 'AT+QCFG="usbnet",0'

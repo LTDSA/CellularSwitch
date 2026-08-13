@@ -9,10 +9,13 @@ import {
 } from 'lucide-react'
 import type { ModuleService } from '../services/ModuleService'
 import type { Telemetry, SignalInfo } from '../types'
+import { TELEMETRY_REFRESH_MS } from '../constants'
 
 interface Props {
   device: USBDevice
   moduleService: ModuleService
+  /** 递增时强制重新查询（如功能模式切换后射频状态改变）。 */
+  refreshKey?: number
 }
 
 type TelemetryState =
@@ -61,7 +64,7 @@ function SignalIndicator({ signal }: { signal: SignalInfo }) {
  * 「运行状态」标题右侧有信号强度图标；「设备信息」默认脱敏（仅显示首末四位），
  * 点标题右侧的眼睛按钮切换显示完整信息。
  */
-export function DeviceTelemetry({ device, moduleService }: Props) {
+export function DeviceTelemetry({ device, moduleService, refreshKey = 0 }: Props) {
   const [state, setState] = useState<TelemetryState>({ type: 'loading' })
   // 设备信息默认脱敏，点击眼睛按钮后显示完整信息。
   const [revealed, setRevealed] = useState(false)
@@ -76,9 +79,36 @@ export function DeviceTelemetry({ device, moduleService }: Props) {
     }
   }, [device, moduleService])
 
+  // 静默刷新运行状态：只拉运行状态相关指令，保留已加载的设备信息。
+  const refreshRunning = useCallback(async () => {
+    try {
+      const running = await moduleService.getRunningStatus(device)
+      setState((prev) =>
+        prev.type === 'ready'
+          ? { type: 'ready', data: { ...prev.data, running } }
+          : prev,
+      )
+    } catch {
+      // 静默失败：保留旧数据。
+    }
+  }, [device, moduleService])
+
+  // 首次挂载 / 设备变化：全量加载（运行状态 + 设备信息），显示「读取中」。
   useEffect(() => {
     load()
   }, [load])
+
+  // 功能模式切换（refreshKey 递增）：静默刷新运行状态，不闪「读取中」。
+  useEffect(() => {
+    if (refreshKey === 0) return
+    refreshRunning()
+  }, [refreshKey, refreshRunning])
+
+  // 运行状态定时刷新：静默（不闪「读取中」），失败保留旧数据。
+  useEffect(() => {
+    const id = setInterval(refreshRunning, TELEMETRY_REFRESH_MS)
+    return () => clearInterval(id)
+  }, [refreshRunning])
 
   const runningFields = (data: Telemetry): Field[] => [
     { label: '网络模式', value: data.running.networkMode },

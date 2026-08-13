@@ -348,6 +348,31 @@ export class ModuleService {
   }
 
   /**
+   * 只读取运行状态（网络/频段/信道/注册/信号），不含设备信息。
+   * 用于定时静默刷新——设备信息（IMEI/ICCID/IMSI/号码）静态不变，
+   * 只查这 4 条运行状态指令即可，省一半轮询开销。
+   */
+  async getRunningStatus(device: USBDevice): Promise<RunningStatus> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          const qnw = await this.sendAndRead(AT_QNWINFO)
+          const creg = await this.sendAndRead(AT_CREG)
+          const csq = await this.sendAndRead(AT_CSQ)
+          const cpin = await this.sendAndRead(AT_CPIN)
+          return this.parseRunningStatus(qnw, creg, csq, cpin)
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
    * 一次性读取运行状态 + 设备信息。
    * 只读指令按顺序逐条收发（同一 AT 口不能并发读写）；connect() 幂等，
    * 连接一次后复用会话，失败时整体重试一次（覆盖会话间歇性掉线）。
