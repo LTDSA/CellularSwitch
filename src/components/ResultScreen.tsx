@@ -1,4 +1,4 @@
-import { CheckIcon, WarningIcon } from './icons'
+import { CircleCheck, CircleAlert } from 'lucide-react'
 
 interface Props {
   success: boolean
@@ -24,9 +24,9 @@ export function ResultScreen({
   return (
     <div className="flex flex-col items-center text-center px-6">
       {success ? (
-        <CheckIcon className="w-32 h-32 mb-8" />
+        <CircleCheck className="w-32 h-32 mb-8 text-green-500 fill-green-100" />
       ) : (
-        <WarningIcon className="w-32 h-32 mb-8" />
+        <CircleAlert className="w-32 h-32 mb-8 text-orange-500 fill-orange-100" />
       )}
       <h1 className="text-2xl font-semibold text-gray-900 mb-2">{title}</h1>
       <p className="text-gray-600 opacity-50 mb-8 max-w-xs">{message}</p>

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
+import { ChevronDown, Check } from 'lucide-react'
 import type { UsbnetMode } from '../types'
-import { ChevronDownIcon, SmallCheckIcon } from './icons'
 
 interface Props {
   value: UsbnetMode
@@ -110,7 +110,7 @@ export function ModeSelect({ value, onSelect }: Props) {
         className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm text-gray-900 ring-1 ring-inset ring-gray-200 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand/30"
       >
         <span className="min-w-0">{selected?.label}</span>
-        <ChevronDownIcon
+        <ChevronDown
           className={`size-4 shrink-0 text-gray-400 transition-transform ${
             open ? 'rotate-180' : ''
           }`}
@@ -147,7 +147,7 @@ export function ModeSelect({ value, onSelect }: Props) {
                   </span>
                 </span>
                 {isSelected && (
-                  <SmallCheckIcon className="size-4 shrink-0 text-brand" />
+                  <Check className="size-4 shrink-0 text-brand" />
                 )}
               </button>
             )
