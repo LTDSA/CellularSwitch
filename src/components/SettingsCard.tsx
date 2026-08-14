@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { LayoutGrid, MessageSquare } from 'lucide-react'
 import type { UsbnetMode, FuncMode, NwScanMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
@@ -45,6 +45,34 @@ export function SettingsCard({
   const [activeTab, setActiveTab] = useState<'overview' | 'sms'>('overview')
   // 「USB 功能」对话框开关。
   const [usbFunctionOpen, setUsbFunctionOpen] = useState(false)
+
+  // Tab 滑动指示条：记录激活按钮的位置与宽度，用于定位下划线。
+  const overviewTabRef = useRef<HTMLButtonElement>(null)
+  const smsTabRef = useRef<HTMLButtonElement>(null)
+  const [indicator, setIndicator] = useState({ left: 0, width: 0 })
+
+  const measureIndicator = useCallback(() => {
+    const el = activeTab === 'overview' ? overviewTabRef.current : smsTabRef.current
+    if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth })
+  }, [activeTab])
+
+  // 首次挂载：绘制前量一次，避免指示条从零宽度跳变。
+  useLayoutEffect(() => {
+    measureIndicator()
+    // activeTab 变化由下方 useEffect 处理（绘制后更新，保留过渡）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // activeTab 变化：绘制后再更新位置，浏览器先画出旧位置再过渡到新位置。
+  useEffect(() => {
+    measureIndicator()
+  }, [measureIndicator])
+
+  // 窗口尺寸变化（字体缩放 / 响应式）时重新测量。
+  useEffect(() => {
+    window.addEventListener('resize', measureIndicator)
+    return () => window.removeEventListener('resize', measureIndicator)
+  }, [measureIndicator])
 
   const loadMode = useCallback(async () => {
     setQueryState('loading')
@@ -148,31 +176,34 @@ export function SettingsCard({
           <h1 className="text-lg font-semibold text-gray-900">
             {device.productName || '模块设置'}
           </h1>
-          <div className="mt-3 flex gap-1">
+          <div className="relative mt-3 flex gap-1">
             <button
+              ref={overviewTabRef}
               type="button"
               onClick={() => setActiveTab('overview')}
-              className={`-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'overview'
-                  ? 'border-brand text-brand'
-                  : 'border-transparent text-gray-500 hover:border-gray-200 hover:text-gray-700'
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'overview' ? 'text-brand' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               <LayoutGrid className="size-4" />
               概览
             </button>
             <button
+              ref={smsTabRef}
               type="button"
               onClick={() => setActiveTab('sms')}
-              className={`-mb-px flex items-center gap-2 border-b-2 px-3 py-2 text-sm font-medium transition-colors ${
-                activeTab === 'sms'
-                  ? 'border-brand text-brand'
-                  : 'border-transparent text-gray-500 hover:border-gray-200 hover:text-gray-700'
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'sms' ? 'text-brand' : 'text-gray-500 hover:text-gray-700'
               }`}
             >
               <MessageSquare className="size-4" />
               短信
             </button>
+            <span
+              aria-hidden="true"
+              className="absolute -bottom-px h-0.5 rounded-full bg-brand transition-[left,width] duration-200 ease-out"
+              style={{ left: indicator.left, width: indicator.width }}
+            />
           </div>
         </div>
 
