@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
+  Activity,
   Eye,
   EyeOff,
   SignalHigh,
   SignalMedium,
   SignalLow,
   SignalZero,
+  Smartphone,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import type { ModuleService } from '../services/ModuleService'
 import type { Telemetry, SignalInfo } from '../types'
 import { TELEMETRY_REFRESH_MS } from '../constants'
@@ -131,6 +134,7 @@ export function DeviceTelemetry({ device, moduleService, refreshKey = 0 }: Props
     <div className="grid grid-cols-2 divide-x divide-gray-100 border-b border-gray-100">
       <Column
         title="运行状态"
+        icon={Activity}
         state={state}
         onRetry={load}
         fields={runningFields}
@@ -138,6 +142,7 @@ export function DeviceTelemetry({ device, moduleService, refreshKey = 0 }: Props
       />
       <Column
         title="设备信息"
+        icon={Smartphone}
         state={state}
         onRetry={load}
         fields={deviceFields}
@@ -157,6 +162,7 @@ function Column({
   fields,
   revealButton,
   signal,
+  icon: Icon,
 }: {
   title: string
   state: TelemetryState
@@ -166,6 +172,8 @@ function Column({
   revealButton?: { revealed: boolean; onToggle: () => void }
   /** 传入时：标题右侧显示信号强度图标。仅「运行状态」列使用。 */
   signal?: SignalInfo
+  /** 标题左侧的图标。 */
+  icon?: LucideIcon
 }) {
   // 信号图标悬停提示：直接显示精确 dBm（仅 SIM 就绪时渲染图标）。
   const signalLabel = signal
@@ -177,7 +185,10 @@ function Column({
   return (
     <div className="px-6 py-4">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-sm font-semibold text-gray-900">{title}</h2>
+        <h2 className="flex items-center gap-1.5 text-sm font-semibold text-gray-900">
+          {Icon && <Icon className="h-4 w-4 shrink-0 text-gray-500" />}
+          {title}
+        </h2>
         <div className="flex items-center gap-3">
           {/* 未插卡时不显示信号图标（无信号可指示）。 */}
           {signal && signal.simReady && (

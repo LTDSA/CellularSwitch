@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { LayoutGrid, MessageSquare, X } from 'lucide-react'
+import { Antenna, LayoutGrid, MessageSquare, Network, Plane, Usb, X } from 'lucide-react'
 import type { UsbnetMode, FuncMode, NwScanMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
 import { ModuleComputerIllustration } from './icons'
@@ -243,9 +243,12 @@ export function SettingsCard({
 
             <ul className="divide-y divide-gray-100">
               <li className="px-6 h-16 flex items-center justify-between">
-                <div className="flex flex-col">
-                  <span className="text-sm text-gray-900 leading-tight">工作模式</span>
-                  <span className="text-xs text-gray-400 mt-0.5">切换模式需重启模块</span>
+                <div className="flex items-center gap-5">
+                  <Network className="h-5 w-5 shrink-0 text-gray-500" />
+                  <div className="flex flex-col">
+                    <span className="text-sm text-gray-900 leading-tight">工作模式</span>
+                    <span className="text-xs text-gray-400 mt-0.5">切换模式需重启模块</span>
+                  </div>
                 </div>
                 {queryState === 'loading' && (
                   <span className="text-sm text-gray-400">读取中…</span>
@@ -264,11 +267,14 @@ export function SettingsCard({
               </li>
 
               <li className="px-6 h-16 flex items-center justify-between">
-                <div className="flex flex-col">
-                  <span className="text-sm text-gray-900 leading-tight">功能模式</span>
-                  {funcError && (
-                    <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
-                  )}
+                <div className="flex items-center gap-5">
+                  <Plane className="h-5 w-5 shrink-0 text-gray-500" />
+                  <div className="flex flex-col">
+                    <span className="text-sm text-gray-900 leading-tight">功能模式</span>
+                    {funcError && (
+                      <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
+                    )}
+                  </div>
                 </div>
                 {funcQueryState === 'loading' && (
                   <span className="text-sm text-gray-400">读取中…</span>
@@ -287,13 +293,16 @@ export function SettingsCard({
               </li>
 
               <li className="px-6 h-16 flex items-center justify-between">
-                <div className="flex flex-col">
-                  <span className="text-sm text-gray-900 leading-tight">网络制式</span>
-                  {nwScanError ? (
-                    <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
-                  ) : (
-                    <span className="text-xs text-gray-400 mt-0.5">切换模式需重新注册网络</span>
-                  )}
+                <div className="flex items-center gap-5">
+                  <Antenna className="h-5 w-5 shrink-0 text-gray-500" />
+                  <div className="flex flex-col">
+                    <span className="text-sm text-gray-900 leading-tight">网络制式</span>
+                    {nwScanError ? (
+                      <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
+                    ) : (
+                      <span className="text-xs text-gray-400 mt-0.5">切换模式需重新注册网络</span>
+                    )}
+                  </div>
                 </div>
                 {nwScanQueryState === 'loading' && (
                   <span className="text-sm text-gray-400">读取中…</span>
@@ -317,11 +326,14 @@ export function SettingsCard({
                   onClick={() => setUsbFunctionOpen(true)}
                   className="w-full px-6 h-16 flex items-center justify-between text-left rounded-b-2xl hover:bg-gray-50 transition-colors"
                 >
-                  <div className="flex flex-col">
-                    <span className="text-sm text-gray-900 leading-tight">USB 功能</span>
-                    <span className="text-xs text-gray-400 mt-0.5">
-                      配置设备标识与各 USB 接口开关
-                    </span>
+                  <div className="flex items-center gap-5">
+                    <Usb className="h-5 w-5 shrink-0 text-gray-500" />
+                    <div className="flex flex-col">
+                      <span className="text-sm text-gray-900 leading-tight">USB 功能</span>
+                      <span className="text-xs text-gray-400 mt-0.5">
+                        配置设备标识与各 USB 接口开关
+                      </span>
+                    </div>
                   </div>
                   <span className="text-xl text-gray-400 leading-none">›</span>
                 </button>
