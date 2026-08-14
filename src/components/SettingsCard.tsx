@@ -271,8 +271,10 @@ export function SettingsCard({
                   <Plane className="h-5 w-5 shrink-0 text-gray-500" />
                   <div className="flex flex-col">
                     <span className="text-sm text-gray-900 leading-tight">功能模式</span>
-                    {funcError && (
+                    {funcError ? (
                       <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
+                    ) : (
+                      <span className="text-xs text-gray-400 mt-0.5">模块功能级别、射频开关</span>
                     )}
                   </div>
                 </div>
@@ -300,7 +302,7 @@ export function SettingsCard({
                     {nwScanError ? (
                       <span className="text-xs mt-0.5 text-red-500">设置失败，请重试</span>
                     ) : (
-                      <span className="text-xs text-gray-400 mt-0.5">切换模式需重新注册网络</span>
+                      <span className="text-xs text-gray-400 mt-0.5">切换制式需重新注册网络</span>
                     )}
                   </div>
                 </div>
@@ -331,7 +333,7 @@ export function SettingsCard({
                     <div className="flex flex-col">
                       <span className="text-sm text-gray-900 leading-tight">USB 功能</span>
                       <span className="text-xs text-gray-400 mt-0.5">
-                        配置设备标识与各 USB 接口开关
+                        设备标识、USB 接口
                       </span>
                     </div>
                   </div>
