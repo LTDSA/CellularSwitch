@@ -7,6 +7,8 @@ import {
   AT_MODIFY,
   AT_RESTORE,
   AT_CFUN,
+  AT_USBCFG_QUERY,
+  AT_QADBKEY_QUERY,
   AT_CFUN_QUERY,
   AT_NWSCANMODE_QUERY,
   AT_NWSCANMODE_AUTO,
@@ -43,6 +45,7 @@ import type {
   SignalInfo,
   SmsMessage,
   SmsStatus,
+  UsbConfig,
 } from '../types'
 import { parsePdu, type ConcatInfo } from '../utils/pdu'
 
@@ -322,6 +325,157 @@ export class ModuleService {
           if (!response.includes('OK')) {
             throw new Error(`Module rejected command: ${response}`)
           }
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  // 解析「灵活整数」：兼容 0x 前缀十六进制（0x2C7C）与十进制（27884），
+  // 参照 CellDock 的 parseFlexibleInteger——不同固件回读的 VID/PID 可能带/不带 0x 前缀。
+  private static parseFlexibleInteger(raw: string): number {
+    const s = raw.trim()
+    if (/^0x/i.test(s)) return parseInt(s.slice(2), 16)
+    return parseInt(s, 10)
+  }
+
+  /** 由 UsbConfig 拼写 AT+QCFG="usbcfg",<vid>,<pid>,<7 flags>（VID/PID 大写 0x 十六进制）。 */
+  private static buildUsbcfgCommand(config: UsbConfig): string {
+    const vid = `0x${config.vid.toString(16).toUpperCase().padStart(4, '0')}`
+    const pid = `0x${config.pid.toString(16).toUpperCase().padStart(4, '0')}`
+    const flags = [
+      config.diag,
+      config.nmea,
+      config.at,
+      config.modem,
+      config.net,
+      config.adb,
+      config.audio,
+    ]
+      .map((b) => (b ? '1' : '0'))
+      .join(',')
+    return `AT+QCFG="usbcfg",${vid},${pid},${flags}`
+  }
+
+  /**
+   * 查询当前 USB 功能配置（AT+QCFG="usbcfg"）。
+   * 响应例：+QCFG: "usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0（大小写不敏感）。
+   * 与其它只读查询一致：connect 幂等、会话保持打开、失败自动重试一次。
+   */
+  async queryUsbConfig(device: USBDevice): Promise<UsbConfig> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(AT_USBCFG_QUERY)
+          const response = await this.usb.read()
+          this.log(`usbcfg query response: ${JSON.stringify(response)}`)
+          const match = response.match(/\+QCFG:\s*"usbcfg"\s*,([^\r\n]+)/i)
+          if (!match) {
+            throw new Error(`无法解析当前 USB 配置: ${response}`)
+          }
+          const fields = match[1].split(',').map((s) => s.trim())
+          if (fields.length < 9) {
+            throw new Error(`无法解析当前 USB 配置: ${response}`)
+          }
+          const vid = ModuleService.parseFlexibleInteger(fields[0])
+          const pid = ModuleService.parseFlexibleInteger(fields[1])
+          const flags = fields.slice(2, 9).map((f) => f === '1')
+          return {
+            vid,
+            pid,
+            diag: flags[0],
+            nmea: flags[1],
+            at: flags[2],
+            modem: flags[3],
+            net: flags[4],
+            adb: flags[5],
+            audio: flags[6],
+          }
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 应用 USB 功能配置（只改 7 个功能位，VID/PID 保持当前值）。
+   * 流程复制 setUsbnetMode：发送 → 确认 OK → 软重启 → 等待重连。
+   * usbcfg 不变更 VID/PID，Chrome 保留授权，因此能真正检测到重连。
+   */
+  async setUsbConfig(
+    device: USBDevice,
+    config: UsbConfig,
+    onProgress?: (step: 'sending' | 'waiting-reboot' | 'reconnecting') => void,
+    timeoutMs: number = MODE_RECONNECT_WAIT_MS,
+  ): Promise<SetUsbnetModeResult> {
+    this.diagnostics = []
+    const command = ModuleService.buildUsbcfgCommand(config)
+
+    try {
+      return await this.runExclusive(async () => {
+        await this.withRetry(async () => {
+          onProgress?.('sending')
+          await this.usb.connect(device)
+          await this.usb.send(command)
+          const response = await this.usb.read()
+          this.log(`usbcfg set response: ${JSON.stringify(response)}`)
+          if (!response.includes('OK')) {
+            throw new Error(`Module rejected command: ${response}`)
+          }
+        })
+        onProgress?.('waiting-reboot')
+        // 与 applyConfig/setUsbnetMode 同理：CFUN 后模块立即软重启，read() 必然挂起。
+        await this.usb.send(AT_CFUN)
+
+        onProgress?.('reconnecting')
+        const fresh = await this.waitForDevice(
+          device,
+          device.vendorId,
+          device.productId,
+          timeoutMs,
+        )
+        if (fresh) {
+          this.log(
+            `reconnected to fresh device (VID ${this.hex(fresh.vendorId)} PID ${this.hex(
+              fresh.productId,
+            )})`,
+          )
+          return { reconnected: true, device: fresh }
+        }
+        this.log(
+          'reconnect wait: auto-reconnect unavailable (module likely has no USB serial number)',
+        )
+        return { reconnected: false, device: null }
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 查询工厂锁（QADBKEY）状态：AT+QADBKEY? 返回 +QADBKEY: <8位数字> 表示锁仍启用。
+   * 返回 true=锁定（ADB/USB 音频不可改），false=未锁定或此固件无此锁。
+   */
+  async queryAdbLock(device: USBDevice): Promise<boolean> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(AT_QADBKEY_QUERY)
+          const response = await this.usb.read()
+          this.log(`qadbkey query response: ${JSON.stringify(response)}`)
+          return /\+QADBKEY:\s*\d{8}/i.test(response)
         })
       })
     } catch (err) {

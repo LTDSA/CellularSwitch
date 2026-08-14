@@ -152,7 +152,7 @@ function App() {
         <SettingsCard
           device={state.device}
           moduleService={moduleService}
-          onRestore={() => handleAction('restore')}
+          onRequestIdentityChange={(op) => handleAction(op)}
           onDeviceRefreshed={handleDeviceRefreshed}
           onReconnect={connectDevice}
         />
@@ -185,12 +185,11 @@ function App() {
         />
       )}
 
-      {pendingOperation && (
-        <DisclaimerDialog
-          onConfirm={handleConfirm}
-          onCancel={() => setPendingOperation(null)}
-        />
-      )}
+      <DisclaimerDialog
+        open={pendingOperation !== null}
+        onConfirm={handleConfirm}
+        onCancel={() => setPendingOperation(null)}
+      />
     </div>
   )
 }

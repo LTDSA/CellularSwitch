@@ -7,13 +7,15 @@ import { ModeSelect } from './ModeSelect'
 import { FuncModeSelect } from './FuncModeSelect'
 import { NwScanModeSelect } from './NwScanModeSelect'
 import { ModeSwitchDialog } from './ModeSwitchDialog'
+import { UsbFunctionDialog } from './UsbFunctionDialog'
 import { DeviceTelemetry } from './DeviceTelemetry'
 import { SmsView } from './SmsView'
 
 interface Props {
   device: USBDevice
   moduleService: ModuleService
-  onRestore: () => void
+  /** 用户切换设备标识时，走 App 原有的整屏免责声明 → 修改流程。 */
+  onRequestIdentityChange: (operation: 'modify' | 'restore') => void
   onDeviceRefreshed: (freshDevice: USBDevice) => void
   /** 发起手动重连；成功返回选中的设备，用户取消/失败则抛错。 */
   onReconnect: () => Promise<USBDevice>
@@ -24,7 +26,7 @@ type QueryState = 'loading' | 'ready' | 'error'
 export function SettingsCard({
   device,
   moduleService,
-  onRestore,
+  onRequestIdentityChange,
   onDeviceRefreshed,
   onReconnect,
 }: Props) {
@@ -41,6 +43,8 @@ export function SettingsCard({
   const [telemetryVersion, setTelemetryVersion] = useState(0)
   // 当前选项卡：概览（运行状态/设备信息/模式设置）或 短信。
   const [activeTab, setActiveTab] = useState<'overview' | 'sms'>('overview')
+  // 「USB 功能」对话框开关。
+  const [usbFunctionOpen, setUsbFunctionOpen] = useState(false)
 
   const loadMode = useCallback(async () => {
     setQueryState('loading')
@@ -253,10 +257,15 @@ export function SettingsCard({
               <li>
                 {/* 底部两个角与卡片圆角对齐；不能给卡片加 overflow-hidden，那会裁掉工作模式下拉菜单。 */}
                 <button
-                  onClick={onRestore}
-                  className="w-full px-6 h-16 flex items-center justify-between rounded-b-2xl hover:bg-gray-50 transition-colors"
+                  onClick={() => setUsbFunctionOpen(true)}
+                  className="w-full px-6 h-16 flex items-center justify-between text-left rounded-b-2xl hover:bg-gray-50 transition-colors"
                 >
-                  <span className="text-sm text-red-500">恢复设备标识</span>
+                  <div className="flex flex-col">
+                    <span className="text-sm text-gray-900 leading-tight">USB 功能</span>
+                    <span className="text-xs text-gray-400 mt-0.5">
+                      配置设备标识与各 USB 接口开关
+                    </span>
+                  </div>
                   <span className="text-xl text-gray-400 leading-none">›</span>
                 </button>
               </li>
@@ -267,16 +276,25 @@ export function SettingsCard({
         )}
       </div>
 
-      {switching && (
-        <ModeSwitchDialog
-          device={device}
-          target={switching}
-          moduleService={moduleService}
-          onSuccess={handleSwitchSuccess}
-          onClose={handleSwitchClose}
-          onReconnect={onReconnect}
-        />
-      )}
+      <ModeSwitchDialog
+        open={switching !== null}
+        device={device}
+        target={switching ?? 'qmi'}
+        moduleService={moduleService}
+        onSuccess={handleSwitchSuccess}
+        onClose={handleSwitchClose}
+        onReconnect={onReconnect}
+      />
+
+      <UsbFunctionDialog
+        open={usbFunctionOpen}
+        device={device}
+        moduleService={moduleService}
+        onRequestIdentityChange={onRequestIdentityChange}
+        onDeviceRefreshed={onDeviceRefreshed}
+        onReconnect={onReconnect}
+        onClose={() => setUsbFunctionOpen(false)}
+      />
     </div>
   )
 }

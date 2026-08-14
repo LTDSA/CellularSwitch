@@ -4,9 +4,14 @@ export const MODIFIED_VID = 0x2c7c
 export const MODIFIED_PID = 0x0125
 
 // 参考 wlzh/dji-4g-vohive-mac 与 CdricZhang/dji-cellular-as-modem：
-// usbcfg 需 8 个参数（VID,PID + 5 个 USB 功能标志 + 2 个调试标志）。
+// usbcfg 需 9 个参数（VID,PID + 7 个 USB 功能标志：diag,nmea,at,modem,net,adb,audio）。
 export const AT_MODIFY = 'AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0'
 export const AT_RESTORE = 'AT+QCFG="usbcfg",0x2CA3,0x4006,1,1,1,1,1,0,0'
+
+// USB 功能（AT+QCFG="usbcfg"）查询。写命令由当前 VID/PID + 7 个功能位动态拼出。
+export const AT_USBCFG_QUERY = 'AT+QCFG="usbcfg"'
+// 工厂锁（QADBKEY）挑战查询：返回 +QADBKEY: <8位数字> 表示锁仍启用（ADB/USB 音频不可改）。
+export const AT_QADBKEY_QUERY = 'AT+QADBKEY?'
 // usbcfg 后需软重启使新 USB 身份生效。
 export const AT_CFUN = 'AT+CFUN=1,1'
 

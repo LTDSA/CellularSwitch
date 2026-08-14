@@ -18,6 +18,7 @@
 - 查看设备信息：IMEI、ICCID、IMSI、本机号码
 - 查看短信：按号码查看会话
 - 切换工作模式：QMI / ECM / MBIM / RNDIS
+- 配置 USB 功能：diag / nmea / at / modem / rmnet / adb / uac
 - 全程在浏览器内完成，支持 Chrome / Edge 桌面版
 
 ## 使用方法

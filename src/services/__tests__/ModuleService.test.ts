@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ModuleService } from '../ModuleService'
+import type { UsbConfig } from '../../types'
 
 const createMockDevice = (vendorId: number, productId: number): USBDevice =>
   ({ vendorId, productId } as USBDevice)
@@ -574,6 +575,159 @@ describe('ModuleService.setNwScanMode', () => {
     await expect(
       service.setNwScanMode(createMockDevice(0x2c7c, 0x0125), 0),
     ).rejects.toThrow('Module rejected command')
+  })
+})
+
+describe('ModuleService.queryUsbConfig', () => {
+  it('parses hex VID/PID and 7 flags', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue(
+      'AT+QCFG="usbcfg"\r\n+QCFG: "usbcfg",0x2C7C,0x0125,1,1,1,1,1,0,0\r\nOK',
+    )
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryUsbConfig(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toEqual({
+      vid: 0x2c7c,
+      pid: 0x0125,
+      diag: true,
+      nmea: true,
+      at: true,
+      modem: true,
+      net: true,
+      adb: false,
+      audio: false,
+    })
+    expect(usb.send).toHaveBeenCalledWith('AT+QCFG="usbcfg"')
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('parses lowercase hex and decimal VID/PID', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+QCFG: "usbcfg",0x2c7c,293,1,0,1,0,1,0,1\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryUsbConfig(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toEqual({
+      vid: 0x2c7c,
+      pid: 0x0125,
+      diag: true,
+      nmea: false,
+      at: true,
+      modem: false,
+      net: true,
+      adb: false,
+      audio: true,
+    })
+  })
+
+  it('throws when the response cannot be parsed', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryUsbConfig(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow('无法解析当前 USB 配置')
+  })
+})
+
+describe('ModuleService.setUsbConfig', () => {
+  const baseConfig: UsbConfig = {
+    vid: 0x2c7c,
+    pid: 0x0125,
+    diag: true,
+    nmea: true,
+    at: true,
+    modem: true,
+    net: true,
+    adb: false,
+    audio: false,
+  }
+
+  it('builds the command, reboots, and returns the fresh device after reconnect', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+    const fresh = createMockDevice(0x2c7c, 0x0125)
+    const config: UsbConfig = { ...baseConfig, adb: true }
+
+    const promise = service.setUsbConfig(device, config, vi.fn())
+
+    await new Promise((r) => setTimeout(r, 10))
+    Object.assign(navigator.usb, {
+      getDevices: vi.fn().mockResolvedValue([fresh]),
+    })
+
+    const result = await promise
+
+    expect(result.reconnected).toBe(true)
+    expect(result.device).toBe(fresh)
+    expect(usb.connect).toHaveBeenCalledWith(device)
+    expect(usb.send).toHaveBeenCalledWith('AT+QCFG="usbcfg",0x2C7C,0x0125,1,1,1,1,1,1,0')
+    expect(usb.send).toHaveBeenCalledWith('AT+CFUN=1,1')
+    // 新架构：正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('returns reconnected:false when the module does not re-enumerate (apply still succeeded)', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+    Object.assign(navigator.usb, {
+      getDevices: vi.fn().mockResolvedValue([]),
+    })
+
+    await expect(
+      service.setUsbConfig(createMockDevice(0x2c7c, 0x0125), baseConfig, undefined, 30),
+    ).resolves.toEqual({ reconnected: false, device: null })
+  })
+
+  it('throws a localized rejection when the module rejects the command', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.setUsbConfig(createMockDevice(0x2c7c, 0x0125), baseConfig),
+    ).rejects.toThrow('Module rejected command')
+  })
+})
+
+describe('ModuleService.queryAdbLock', () => {
+  it('returns true when QADBKEY returns an 8-digit challenge', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('AT+QADBKEY?\r\n+QADBKEY: 12345678\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryAdbLock(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe(true)
+    expect(usb.send).toHaveBeenCalledWith('AT+QADBKEY?')
+  })
+
+  it('returns false when there is no challenge', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('AT+QADBKEY?\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryAdbLock(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe(false)
+  })
+
+  it('returns false on error/unsupported response', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.queryAdbLock(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe(false)
   })
 })
 

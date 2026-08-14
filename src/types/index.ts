@@ -77,6 +77,22 @@ export interface Telemetry {
 /** 短信状态（AT+CMGL 文本模式的 <stat> 字段）。 */
 export type SmsStatus = 'REC UNREAD' | 'REC READ' | 'STO UNSENT' | 'STO SENT'
 
+/**
+ * USB 功能配置（AT+QCFG="usbcfg"）：VID/PID + 7 个功能位。
+ * 字段顺序对应 Quectel 手册：vid,pid,diag,nmea,at,modem,rmnet(net),adb,uac(audio)。
+ */
+export interface UsbConfig {
+  vid: number
+  pid: number
+  diag: boolean // 诊断接口
+  nmea: boolean // NMEA 接口
+  at: boolean // AT 接口
+  modem: boolean // Modem 接口
+  net: boolean // 网络接口（rmnet）
+  adb: boolean // ADB
+  audio: boolean // USB 音频（UAC）
+}
+
 /** 一条短信，由 AT+CMGL 文本模式响应解析而来。 */
 export interface SmsMessage {
   /** 存储区位置号（AT+CMGR/CMGD 用）。 */
