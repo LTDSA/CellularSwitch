@@ -3,7 +3,6 @@ import type { AppState } from './types'
 import { UsbService } from './services/UsbService'
 import { ModuleService } from './services/ModuleService'
 import { IdleScreen } from './components/IdleScreen'
-import { ConnectedScreen } from './components/ConnectedScreen'
 import { SettingsCard } from './components/SettingsCard'
 import { ProcessingScreen } from './components/ProcessingScreen'
 import { ResultScreen } from './components/ResultScreen'
@@ -104,7 +103,14 @@ function App() {
   }, [pendingOperation, state])
 
   const handleDeviceRefreshed = useCallback((freshDevice: USBDevice) => {
-    setState({ type: 'connected-modified', device: freshDevice })
+    // 重连/重枚举后按新设备实际 VID/PID 判定身份，保留原始/标准状态，
+    // 避免原始标识模块在工作模式切换、USB 功能应用后错误地变成「已修改」。
+    const mode = moduleService.detectState(freshDevice)
+    setState(
+      mode === 'original'
+        ? { type: 'connected-original', device: freshDevice }
+        : { type: 'connected-modified', device: freshDevice },
+    )
   }, [])
 
   useEffect(() => {
@@ -144,13 +150,10 @@ function App() {
     <div className="min-h-screen flex flex-col items-center justify-center px-6">
       {state.type === 'idle' && <IdleScreen onConnect={handleConnect} />}
 
-      {state.type === 'connected-original' && (
-        <ConnectedScreen onAction={() => handleAction('modify')} />
-      )}
-
-      {state.type === 'connected-modified' && (
+      {(state.type === 'connected-original' || state.type === 'connected-modified') && (
         <SettingsCard
           device={state.device}
+          isOriginal={state.type === 'connected-original'}
           moduleService={moduleService}
           onRequestIdentityChange={(op) => handleAction(op)}
           onDeviceRefreshed={handleDeviceRefreshed}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { LayoutGrid, MessageSquare } from 'lucide-react'
+import { LayoutGrid, MessageSquare, X } from 'lucide-react'
 import type { UsbnetMode, FuncMode, NwScanMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
 import { ModuleComputerIllustration } from './icons'
@@ -13,6 +13,8 @@ import { SmsView } from './SmsView'
 
 interface Props {
   device: USBDevice
+  /** 是否为原始设备标识：是则在卡片上方展示「可修改标识」横幅。 */
+  isOriginal: boolean
   moduleService: ModuleService
   /** 用户切换设备标识时，走 App 原有的整屏免责声明 → 修改流程。 */
   onRequestIdentityChange: (operation: 'modify' | 'restore') => void
@@ -25,6 +27,7 @@ type QueryState = 'loading' | 'ready' | 'error'
 
 export function SettingsCard({
   device,
+  isOriginal,
   moduleService,
   onRequestIdentityChange,
   onDeviceRefreshed,
@@ -45,6 +48,8 @@ export function SettingsCard({
   const [activeTab, setActiveTab] = useState<'overview' | 'sms'>('overview')
   // 「USB 功能」对话框开关。
   const [usbFunctionOpen, setUsbFunctionOpen] = useState(false)
+  // 原始标识横幅是否已被用户关闭。
+  const [bannerDismissed, setBannerDismissed] = useState(false)
 
   // Tab 滑动指示条：记录激活按钮的位置与宽度，用于定位下划线。
   const overviewTabRef = useRef<HTMLButtonElement>(null)
@@ -170,6 +175,27 @@ export function SettingsCard({
   return (
     <div className="w-full flex flex-col items-center px-6">
       <ModuleComputerIllustration className="w-64 h-48 mb-8" />
+
+      {isOriginal && !bannerDismissed && (
+        <div className="w-full max-w-3xl mb-4 flex items-center gap-3 rounded-xl border border-brand/20 bg-brand/5 px-4 py-3">
+          <p className="flex-1 text-sm leading-relaxed text-brand">
+            模块当前为原始设备标识，可修改为标准 Quectel 标识
+          </p>
+          <button
+            onClick={() => onRequestIdentityChange('modify')}
+            className="shrink-0 px-4 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+          >
+            修改
+          </button>
+          <button
+            onClick={() => setBannerDismissed(true)}
+            aria-label="关闭提示"
+            className="shrink-0 p-1 rounded-md text-brand/60 hover:bg-brand/10 hover:text-brand transition-colors"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
 
       <div className="w-full max-w-3xl rounded-2xl bg-white shadow-sm">
         <div className="px-6 pt-5 border-b border-gray-100">
