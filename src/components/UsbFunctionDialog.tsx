@@ -41,7 +41,8 @@ const FLAG_ROWS: {
   label: string
   description: string
   dangerText?: string
-  locked?: boolean
+  /** 进阶选项：开启时会自动解除工厂锁（QADBKEY）。 */
+  advanced?: boolean
 }[] = [
   {
     key: 'diag',
@@ -72,21 +73,21 @@ const FLAG_ROWS: {
   {
     key: 'adb',
     label: 'ADB',
-    description: '需解除工厂锁后才可开启',
-    locked: true,
+    description: 'Android 调试桥',
+    advanced: true,
   },
   {
     key: 'audio',
     label: 'USB 音频',
-    description: '需解除工厂锁后才可开启',
-    locked: true,
+    description: 'USB 音频（UAC）',
+    advanced: true,
   },
 ]
 
 // 基础选项：无需解除工厂锁即可配置的功能位。
-const BASIC_ROWS = FLAG_ROWS.filter((row) => !row.locked)
-// 进阶选项：需解除工厂锁（QADBKEY）后才可开启的功能位。
-const ADVANCED_ROWS = FLAG_ROWS.filter((row) => row.locked)
+const BASIC_ROWS = FLAG_ROWS.filter((row) => !row.advanced)
+// 进阶选项：开启时会自动解除工厂锁（QADBKEY）的功能位。
+const ADVANCED_ROWS = FLAG_ROWS.filter((row) => row.advanced)
 
 /** Tailwind Plus 风格滑动开关（role=switch）。轨道用 p-0.5 内边距包住滑块，两侧留白对称。 */
 function Toggle({
@@ -148,7 +149,7 @@ function FlagRow({
 /**
  * 「USB 功能」对话框：按 usbcfg 字段逐项查看/编辑设备标识与 7 个功能位。
  * 开关先在本地改（draft），点「应用」一次性写 usbcfg 并重启一次；
- * ADB/USB 音频受工厂锁保护，未检测到解锁时置灰；设备标识切换走原有整屏流程。
+ * 开启 ADB / USB 音频时先自动解除工厂锁（幂等）；设备标识切换走原有整屏流程。
  */
 export function UsbFunctionDialog({
   open,
@@ -162,8 +163,6 @@ export function UsbFunctionDialog({
   const [config, setConfig] = useState<UsbConfig | null>(null)
   const [draft, setDraft] = useState<UsbConfig | null>(null)
   const [loadState, setLoadState] = useState<LoadState>('loading')
-  // 默认按锁定处理（置灰），仅当检测到明确「未锁定」才放开。
-  const [adbLocked, setAdbLocked] = useState(true)
 
   const [phase, setPhase] = useState<Phase>('idle')
   const [step, setStep] = useState<Step>('sending')
@@ -172,12 +171,11 @@ export function UsbFunctionDialog({
   const [errorSource, setErrorSource] = useState<ErrorSource>('apply')
   const applyStartedRef = useRef(false)
 
-  // 并行读取 usbcfg 与工厂锁状态。
+  // 读取 usbcfg。锁状态无法通过 AT 命令读取，故不在此判定；开启 ADB/USB 音频时在应用阶段自动解锁。
   const load = useCallback(async () => {
     setLoadState('loading')
     setConfig(null)
     setDraft(null)
-    setAdbLocked(true)
     try {
       const c = await moduleService.queryUsbConfig(device)
       setConfig(c)
@@ -185,12 +183,6 @@ export function UsbFunctionDialog({
       setLoadState('ready')
     } catch {
       setLoadState('error')
-    }
-    // 锁状态独立于配置查询，任一失败都不影响另一项。
-    try {
-      setAdbLocked(await moduleService.queryAdbLock(device))
-    } catch {
-      setAdbLocked(true)
     }
   }, [device, moduleService])
 
@@ -229,12 +221,19 @@ export function UsbFunctionDialog({
     FLAG_ROWS.some((r) => config[r.key] !== draft[r.key])
 
   const startApply = useCallback(async () => {
-    if (!draft || applyStartedRef.current) return
+    if (!draft || !config || applyStartedRef.current) return
     applyStartedRef.current = true
     setPhase('running')
     setStep('sending')
     setError('')
     try {
+      // 开启 ADB / USB 音频前先自动解除工厂锁（QADBKEY）。解锁幂等：
+      // 已解锁时重复执行仍返回 OK，故无需（也无法）先查询锁状态——
+      // AT+QADBKEY? 只返回挑战值，不反映锁定与否。
+      const needsUnlock = (draft.adb && !config.adb) || (draft.audio && !config.audio)
+      if (needsUnlock) {
+        await moduleService.unlockFactoryLock(device)
+      }
       const result = await moduleService.setUsbConfig(device, draft, (s) => setStep(s))
       if (result.reconnected && result.device) {
         // 自动重连成功：父组件刷新设备并卸载本对话框。
@@ -250,7 +249,7 @@ export function UsbFunctionDialog({
       setErrorSource('apply')
       setPhase('error')
     }
-  }, [draft, device, moduleService, onDeviceRefreshed, onClose])
+  }, [draft, config, device, moduleService, onDeviceRefreshed, onClose])
 
   // 手动重新连接（应用成功后模块无 USB 序列号、浏览器无法自动重连时）。
   const handleReconnect = async () => {
@@ -330,7 +329,7 @@ export function UsbFunctionDialog({
                     key={row.key}
                     row={row}
                     checked={draft[row.key]}
-                    disabled={adbLocked}
+                    disabled={false}
                     onToggle={(v) => setFlag(row.key, v)}
                   />
                 ))}

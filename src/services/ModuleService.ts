@@ -48,6 +48,7 @@ import type {
   UsbConfig,
 } from '../types'
 import { parsePdu, type ConcatInfo } from '../utils/pdu'
+import { deriveQadbKey } from '../utils/qadbkey'
 
 const USBNET_COMMANDS: Record<UsbnetMode, string> = {
   qmi: AT_USBNET_QMI,
@@ -463,19 +464,37 @@ export class ModuleService {
   }
 
   /**
-   * 查询工厂锁（QADBKEY）状态：AT+QADBKEY? 返回 +QADBKEY: <8位数字> 表示锁仍启用。
-   * 返回 true=锁定（ADB/USB 音频不可改），false=未锁定或此固件无此锁。
+   * 解除工厂锁（QADBKEY）：查询 8 位挑战值 → 用 md5crypt 派生 15 位解锁密钥
+   * → 发送 AT+QADBKEY="<key>" 并确认 OK。算法参照 CellDock 的 QADBKeyDeriver
+   * （密码固定 SH_adb_quectel，盐为挑战值，取 crypt base64 前 15 位）。
+   * 解锁不触发重启；成功后锁状态立即解除（AT+QADBKEY? 不再返回挑战值）。
    */
-  async queryAdbLock(device: USBDevice): Promise<boolean> {
+  async unlockFactoryLock(device: USBDevice): Promise<void> {
     this.diagnostics = []
     try {
-      return await this.runExclusive(async () => {
-        return await this.withRetry(async () => {
+      await this.runExclusive(async () => {
+        await this.withRetry(async () => {
           await this.usb.connect(device)
+          // 1. 查询挑战值（锁仍启用时返回 +QADBKEY: <8位数字>）。
           await this.usb.send(AT_QADBKEY_QUERY)
-          const response = await this.usb.read()
-          this.log(`qadbkey query response: ${JSON.stringify(response)}`)
-          return /\+QADBKEY:\s*\d{8}/i.test(response)
+          const challengeResponse = await this.usb.read()
+          this.log(`qadbkey unlock challenge: ${JSON.stringify(challengeResponse)}`)
+          const challenge = challengeResponse.match(/\+QADBKEY:\s*(\d{8})/i)?.[1]
+          if (!challenge) {
+            throw new Error('无法获取工厂锁挑战值')
+          }
+          // 2. 由挑战值派生解锁密钥。
+          const key = deriveQadbKey(challenge)
+          if (!key) {
+            throw new Error('无法派生工厂锁解锁密钥')
+          }
+          // 3. 发送解锁密钥并确认 OK。
+          await this.usb.send(`AT+QADBKEY="${key}"`)
+          const unlockResponse = await this.usb.read()
+          this.log(`qadbkey unlock response: ${JSON.stringify(unlockResponse)}`)
+          if (!unlockResponse.includes('OK')) {
+            throw new Error(`Module rejected unlock key: ${unlockResponse}`)
+          }
         })
       })
     } catch (err) {

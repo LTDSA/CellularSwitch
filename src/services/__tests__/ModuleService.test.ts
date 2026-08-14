@@ -698,36 +698,40 @@ describe('ModuleService.setUsbConfig', () => {
   })
 })
 
-describe('ModuleService.queryAdbLock', () => {
-  it('returns true when QADBKEY returns an 8-digit challenge', async () => {
+describe('ModuleService.unlockFactoryLock', () => {
+  it('derives the key from the challenge and sends the unlock command', async () => {
     const usb = createMockUsb()
-    usb.read.mockResolvedValue('AT+QADBKEY?\r\n+QADBKEY: 12345678\r\nOK')
+    usb.read.mockResolvedValueOnce('AT+QADBKEY?\r\n+QADBKEY: 42790187\r\nOK')
+    usb.read.mockResolvedValueOnce('OK')
     const service = new ModuleService(usb)
 
-    await expect(
-      service.queryAdbLock(createMockDevice(0x2c7c, 0x0125)),
-    ).resolves.toBe(true)
+    await service.unlockFactoryLock(createMockDevice(0x2c7c, 0x0125))
+
     expect(usb.send).toHaveBeenCalledWith('AT+QADBKEY?')
+    expect(usb.send).toHaveBeenCalledWith('AT+QADBKEY="cQfD.paNjDkltja"')
+    // 正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
   })
 
-  it('returns false when there is no challenge', async () => {
+  it('throws when there is no challenge to derive from', async () => {
     const usb = createMockUsb()
-    usb.read.mockResolvedValue('AT+QADBKEY?\r\nOK')
+    usb.read.mockResolvedValueOnce('AT+QADBKEY?\r\nOK')
     const service = new ModuleService(usb)
 
     await expect(
-      service.queryAdbLock(createMockDevice(0x2c7c, 0x0125)),
-    ).resolves.toBe(false)
+      service.unlockFactoryLock(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow('无法获取工厂锁挑战值')
   })
 
-  it('returns false on error/unsupported response', async () => {
+  it('throws when the module rejects the unlock key', async () => {
     const usb = createMockUsb()
-    usb.read.mockResolvedValue('ERROR')
+    usb.read.mockResolvedValueOnce('AT+QADBKEY?\r\n+QADBKEY: 42790187\r\nOK')
+    usb.read.mockResolvedValueOnce('ERROR')
     const service = new ModuleService(usb)
 
     await expect(
-      service.queryAdbLock(createMockDevice(0x2c7c, 0x0125)),
-    ).resolves.toBe(false)
+      service.unlockFactoryLock(createMockDevice(0x2c7c, 0x0125)),
+    ).rejects.toThrow('Module rejected unlock key')
   })
 })
 
