@@ -83,6 +83,11 @@ const FLAG_ROWS: {
   },
 ]
 
+// 基础选项：无需解除工厂锁即可配置的功能位。
+const BASIC_ROWS = FLAG_ROWS.filter((row) => !row.locked)
+// 进阶选项：需解除工厂锁（QADBKEY）后才可开启的功能位。
+const ADVANCED_ROWS = FLAG_ROWS.filter((row) => row.locked)
+
 /** Tailwind Plus 风格滑动开关（role=switch）。轨道用 p-0.5 内边距包住滑块，两侧留白对称。 */
 function Toggle({
   checked,
@@ -111,6 +116,32 @@ function Toggle({
         }`}
       />
     </button>
+  )
+}
+
+/** 单个功能位列表项（基础/进阶共用）：左文案右开关。 */
+function FlagRow({
+  row,
+  checked,
+  disabled,
+  onToggle,
+}: {
+  row: (typeof FLAG_ROWS)[number]
+  checked: boolean
+  disabled: boolean
+  onToggle: (value: boolean) => void
+}) {
+  return (
+    <li className="px-6 py-3.5 flex items-center justify-between gap-4">
+      <div className="flex flex-col min-w-0">
+        <span className="text-sm text-gray-900 leading-tight">{row.label}</span>
+        <span className="text-xs text-gray-400 mt-0.5">
+          {row.description}
+          {row.dangerText && <span className="text-red-500">{row.dangerText}</span>}
+        </span>
+      </div>
+      <Toggle checked={checked} disabled={disabled} onChange={onToggle} />
+    </li>
   )
 }
 
@@ -264,36 +295,47 @@ export function UsbFunctionDialog({
             </div>
           )}
           {loadState === 'ready' && draft && (
-            <ul className="thin-scrollbar max-h-[calc(100vh_-_8rem)] overflow-y-auto divide-y divide-gray-100">
-              <li className="px-6 py-3.5 flex items-center justify-between gap-4">
-                <div className="flex flex-col min-w-0">
-                  <span className="text-sm text-gray-900 leading-tight">设备标识</span>
-                  <span className="text-xs text-gray-400 mt-0.5">
-                    USB 厂商标识与产品标识（VID / PID）
-                  </span>
-                </div>
-                <UsbIdentitySelect value={identity} onSelect={handleIdentitySelect} />
-              </li>
-
-              {FLAG_ROWS.map((row) => (
-                <li key={row.key} className="px-6 py-3.5 flex items-center justify-between gap-4">
+            <div className="thin-scrollbar max-h-[calc(100vh_-_10rem)] overflow-y-auto">
+              <div className="px-6 pt-4 pb-1.5 text-xs font-medium text-gray-400">
+                基础选项
+              </div>
+              <ul className="divide-y divide-gray-100">
+                <li className="px-6 py-3.5 flex items-center justify-between gap-4">
                   <div className="flex flex-col min-w-0">
-                    <span className="text-sm text-gray-900 leading-tight">{row.label}</span>
+                    <span className="text-sm text-gray-900 leading-tight">设备标识</span>
                     <span className="text-xs text-gray-400 mt-0.5">
-                      {row.description}
-                      {row.dangerText && (
-                        <span className="text-red-500">{row.dangerText}</span>
-                      )}
+                      USB 厂商标识与产品标识（VID / PID）
                     </span>
                   </div>
-                  <Toggle
-                    checked={draft[row.key]}
-                    disabled={row.locked ? adbLocked : false}
-                    onChange={(v) => setFlag(row.key, v)}
-                  />
+                  <UsbIdentitySelect value={identity} onSelect={handleIdentitySelect} />
                 </li>
-              ))}
-            </ul>
+
+                {BASIC_ROWS.map((row) => (
+                  <FlagRow
+                    key={row.key}
+                    row={row}
+                    checked={draft[row.key]}
+                    disabled={false}
+                    onToggle={(v) => setFlag(row.key, v)}
+                  />
+                ))}
+              </ul>
+
+              <div className="px-6 pt-5 pb-1.5 text-xs font-medium text-gray-400">
+                进阶选项
+              </div>
+              <ul className="divide-y divide-gray-100">
+                {ADVANCED_ROWS.map((row) => (
+                  <FlagRow
+                    key={row.key}
+                    row={row}
+                    checked={draft[row.key]}
+                    disabled={adbLocked}
+                    onToggle={(v) => setFlag(row.key, v)}
+                  />
+                ))}
+              </ul>
+            </div>
           )}
 
           <div className="flex justify-end gap-2 px-6 py-4">
