@@ -235,7 +235,7 @@ function AtTerminal({ device, moduleService }: Props) {
     >
       <div
         ref={scrollRef}
-        className="flex-1 overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed"
+        className="thin-scrollbar flex-1 overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed"
       >
         {entries.length === 0 && (
           <p className="text-gray-400">输入 AT 指令并按回车，例如 AT+CSQ</p>
@@ -548,7 +548,7 @@ function AdbTerminal({ device, moduleService }: Props) {
       <div
         ref={scrollRef}
         onClick={() => inputRef.current?.focus()}
-        className="flex-1 overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-gray-700"
+        className="thin-scrollbar flex-1 overflow-y-auto px-4 py-3 font-mono text-xs leading-relaxed text-gray-700"
       >
         <pre className="whitespace-pre-wrap break-words">{body}</pre>
         <div className="flex items-baseline">
