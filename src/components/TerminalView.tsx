@@ -262,6 +262,10 @@ function AdbTerminal({ device, moduleService }: Props) {
   const adbRef = useRef<AdbService | null>(null)
   const streamRef = useRef<AdbStream | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // 命令历史（本地维护，最近的在末尾）与浏览位置；-1 表示正在输入新行。
+  const historyRef = useRef<string[]>([])
+  const historyIndexRef = useRef(-1)
+  const draftRef = useRef('')
   const [state, setState] = useState<AdbState>('checking')
   const [error, setError] = useState('')
   const [diagnostics, setDiagnostics] = useState('')
@@ -366,6 +370,11 @@ function AdbTerminal({ device, moduleService }: Props) {
   const submit = useCallback(() => {
     const stream = streamRef.current
     if (!stream) return
+    if (input.trim()) {
+      historyRef.current.push(input)
+    }
+    historyIndexRef.current = -1
+    draftRef.current = ''
     setInput('')
     void stream.write(`${input}\n`).catch((err) => {
       setTranscript(
@@ -374,10 +383,134 @@ function AdbTerminal({ device, moduleService }: Props) {
     })
   }, [input])
 
+  // Ctrl+C：向 shell 发送 SIGINT（0x03）中断当前命令，并清空输入行。
+  const sendInterrupt = useCallback(() => {
+    const stream = streamRef.current
+    if (!stream) return
+    setInput('')
+    void stream.write('\x03').catch((err) => {
+      setTranscript(
+        (t) => `${t}[发送失败] ${err instanceof Error ? err.message : String(err)}\n`,
+      )
+    })
+  }, [])
+
+  // 设值并把光标放到指定位置（等待 React 提交到 DOM 后再设置选区）。
+  const setInputWithCursor = useCallback((value: string, cursor: number) => {
+    setInput(value)
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (el) el.setSelectionRange(cursor, cursor)
+    })
+  }, [])
+
+  // 上下键浏览历史：↑ 向旧命令、↓ 向新命令，越界则回到暂存的未提交草稿。
+  const recallHistory = useCallback(
+    (dir: 'up' | 'down') => {
+      const history = historyRef.current
+      if (history.length === 0) return
+      if (dir === 'up') {
+        if (historyIndexRef.current === -1) {
+          draftRef.current = input
+          historyIndexRef.current = history.length - 1
+        } else if (historyIndexRef.current > 0) {
+          historyIndexRef.current -= 1
+        } else {
+          return // 已到最旧一条
+        }
+        const cmd = history[historyIndexRef.current]
+        setInputWithCursor(cmd, cmd.length)
+      } else {
+        if (historyIndexRef.current === -1) return
+        if (historyIndexRef.current < history.length - 1) {
+          historyIndexRef.current += 1
+          const cmd = history[historyIndexRef.current]
+          setInputWithCursor(cmd, cmd.length)
+        } else {
+          historyIndexRef.current = -1
+          const draft = draftRef.current
+          draftRef.current = ''
+          setInputWithCursor(draft, draft.length)
+        }
+      }
+    },
+    [input, setInputWithCursor],
+  )
+
+  // 行内编辑：Ctrl+A 行首、Ctrl+E 行尾、Ctrl+U 删到行首、Ctrl+K 删到行尾。
+  const editLine = useCallback(
+    (op: 'home' | 'end' | 'killBefore' | 'killAfter') => {
+      const el = inputRef.current
+      if (!el) return
+      const value = el.value
+      const start = el.selectionStart ?? value.length
+      const end = el.selectionEnd ?? value.length
+      if (op === 'home') {
+        el.setSelectionRange(0, 0)
+        return
+      }
+      if (op === 'end') {
+        el.setSelectionRange(value.length, value.length)
+        return
+      }
+      if (op === 'killBefore') {
+        setInputWithCursor(value.slice(end), 0)
+        return
+      }
+      setInputWithCursor(value.slice(0, start), start)
+    },
+    [setInputWithCursor],
+  )
+
   const onKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && state === 'ready') {
+    if (state !== 'ready') return
+    if (e.key === 'Enter') {
       e.preventDefault()
       submit()
+      return
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      recallHistory('up')
+      return
+    }
+    if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      recallHistory('down')
+      return
+    }
+    // 仅 Ctrl（不含 Alt/Cmd）的组合键；Cmd/Ctrl 系统快捷键不受影响。
+    if (e.ctrlKey && !e.altKey && !e.metaKey) {
+      if (e.code === 'KeyC') {
+        e.preventDefault()
+        sendInterrupt()
+        return
+      }
+      if (e.code === 'KeyA') {
+        e.preventDefault()
+        editLine('home')
+        return
+      }
+      if (e.code === 'KeyE') {
+        e.preventDefault()
+        editLine('end')
+        return
+      }
+      if (e.code === 'KeyU') {
+        e.preventDefault()
+        editLine('killBefore')
+        return
+      }
+      if (e.code === 'KeyK') {
+        e.preventDefault()
+        editLine('killAfter')
+        return
+      }
+      if (e.code === 'KeyL') {
+        e.preventDefault()
+        setTranscript('')
+        return
+      }
     }
   }
 
