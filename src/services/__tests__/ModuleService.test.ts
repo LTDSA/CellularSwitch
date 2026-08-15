@@ -735,6 +735,35 @@ describe('ModuleService.unlockFactoryLock', () => {
   })
 })
 
+describe('ModuleService.ensureFactoryUnlocked', () => {
+  it('unlocks when a challenge is present', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValueOnce('AT+QADBKEY?\r\n+QADBKEY: 42790187\r\nOK')
+    usb.read.mockResolvedValueOnce('OK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.ensureFactoryUnlocked(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe('已解锁（已发送密钥，模块返回 OK）')
+
+    expect(usb.send).toHaveBeenCalledWith('AT+QADBKEY?')
+    expect(usb.send).toHaveBeenCalledWith('AT+QADBKEY="cQfD.paNjDkltja"')
+  })
+
+  it('is a no-op when already unlocked (no challenge)', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValueOnce('AT+QADBKEY?\r\nOK')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.ensureFactoryUnlocked(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe('已解锁（无挑战值）')
+
+    expect(usb.send).toHaveBeenCalledWith('AT+QADBKEY?')
+    expect(usb.send).not.toHaveBeenCalledWith(expect.stringContaining('AT+QADBKEY="'))
+  })
+})
+
 describe('ModuleService.listSms', () => {
   it('switches to PDU mode and parses a UCS2 incoming message', async () => {
     const usb = createMockUsb()
@@ -851,5 +880,45 @@ describe('ModuleService.listSms', () => {
 
     const cmgfCalls = usb.send.mock.calls.filter((c: any[]) => c[0] === 'AT+CMGF=0')
     expect(cmgfCalls).toHaveLength(1)
+  })
+})
+
+describe('ModuleService.sendAtCommand', () => {
+  it('sends the command and returns the raw response verbatim (echo included)', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('AT+CSQ\r\n+CSQ: 20,0\r\nOK')
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+
+    const response = await service.sendAtCommand(device, 'AT+CSQ')
+
+    expect(response).toBe('AT+CSQ\r\n+CSQ: 20,0\r\nOK')
+    expect(usb.connect).toHaveBeenCalledWith(device)
+    expect(usb.send).toHaveBeenCalledWith('AT+CSQ')
+    // 正常查询/切换流程刻意不调用 close()（保持会话打开，见 UsbService）。
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('returns the module rejection verbatim (does not throw on ERROR)', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('ERROR')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.sendAtCommand(createMockDevice(0x2c7c, 0x0125), 'AT+FOO'),
+    ).resolves.toBe('ERROR')
+  })
+
+  it('does not auto-retry transient errors (arbitrary commands may have side effects)', async () => {
+    const usb = createMockUsb()
+    usb.connect.mockRejectedValue(new Error('Device not connected'))
+    const service = new ModuleService(usb)
+    const device = createMockDevice(0x2c7c, 0x0125)
+
+    await expect(service.sendAtCommand(device, 'AT+CSQ')).rejects.toThrow(
+      'Device not connected',
+    )
+    // sendAtCommand 刻意不做 withRetry：只 connect 一次，不会重发。
+    expect(usb.connect).toHaveBeenCalledTimes(1)
   })
 })

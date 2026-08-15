@@ -504,6 +504,68 @@ export class ModuleService {
     }
   }
 
+  /**
+   * 确保工厂锁（QADBKEY）已解除（幂等），返回人类可读的锁状态说明。查询挑战值：
+   * 若返回 +QADBKEY: <8位数字> 则派生密钥并解锁；若已解锁（无挑战值）则跳过。
+   * 注意：工厂锁只约束 USBCFG 等特权写入，并不约束 adbd 的 CNXN 握手（参考 CellDock
+   * 在 connect() 前并不解锁）；此处仅用于连接失败时把锁状态一并呈现，便于排障。
+   */
+  async ensureFactoryUnlocked(device: USBDevice): Promise<string> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(AT_QADBKEY_QUERY)
+          const challengeResponse = await this.usb.read()
+          this.log(`qadbkey challenge: ${JSON.stringify(challengeResponse)}`)
+          const challenge = challengeResponse.match(/\+QADBKEY:\s*(\d{8})/i)?.[1]
+          if (!challenge) {
+            this.log('qadbkey: already unlocked (no challenge)')
+            return '已解锁（无挑战值）'
+          }
+          const key = deriveQadbKey(challenge)
+          if (!key) {
+            throw new Error('无法派生工厂锁解锁密钥')
+          }
+          await this.usb.send(`AT+QADBKEY="${key}"`)
+          const unlockResponse = await this.usb.read()
+          this.log(`qadbkey unlock response: ${JSON.stringify(unlockResponse)}`)
+          if (!unlockResponse.includes('OK')) {
+            throw new Error(`Module rejected unlock key: ${unlockResponse}`)
+          }
+          return '已解锁（已发送密钥，模块返回 OK）'
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 发送任意 AT 指令并返回原始响应（含命令回显，忠实于真实终端）。
+   * 走 runExclusive 与其它 AT 操作串行；刻意不做 withRetry——终端指令可能是
+   * 任意/有副作用的命令，超时重发会导致重复执行，失败直接呈现给用户重试。
+   */
+  async sendAtCommand(device: USBDevice, command: string): Promise<string> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        await this.usb.connect(device)
+        await this.usb.send(command)
+        const response = await this.usb.read()
+        this.log(`at terminal response: ${JSON.stringify(response)}`)
+        return response
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
   /** 发送一条只读 AT 指令并等待应答；read() 累积到 OK/ERROR 为止。 */
   private async sendAndRead(command: string): Promise<string> {
     await this.usb.send(command)

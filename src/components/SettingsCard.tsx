@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Antenna, LayoutGrid, MessageSquare, Network, Plane, Usb, X } from 'lucide-react'
+import { Antenna, LayoutGrid, MessageSquare, Network, Plane, Terminal, Usb, X } from 'lucide-react'
 import type { UsbnetMode, FuncMode, NwScanMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
 import { ModuleComputerIllustration } from './icons'
@@ -10,6 +10,7 @@ import { ModeSwitchDialog } from './ModeSwitchDialog'
 import { UsbFunctionDialog } from './UsbFunctionDialog'
 import { DeviceTelemetry } from './DeviceTelemetry'
 import { SmsView } from './SmsView'
+import { TerminalView } from './TerminalView'
 
 interface Props {
   device: USBDevice
@@ -44,8 +45,8 @@ export function SettingsCard({
   const [nwScanError, setNwScanError] = useState(false)
   // 功能模式切换后射频状态改变，递增以触发运行状态重新查询。
   const [telemetryVersion, setTelemetryVersion] = useState(0)
-  // 当前选项卡：概览（运行状态/设备信息/模式设置）或 短信。
-  const [activeTab, setActiveTab] = useState<'overview' | 'sms'>('overview')
+  // 当前选项卡：概览（运行状态/设备信息/模式设置）、短信或终端。
+  const [activeTab, setActiveTab] = useState<'overview' | 'sms' | 'terminal'>('overview')
   // 「USB 功能」对话框开关。
   const [usbFunctionOpen, setUsbFunctionOpen] = useState(false)
   // 原始标识横幅是否已被用户关闭。
@@ -54,10 +55,16 @@ export function SettingsCard({
   // Tab 滑动指示条：记录激活按钮的位置与宽度，用于定位下划线。
   const overviewTabRef = useRef<HTMLButtonElement>(null)
   const smsTabRef = useRef<HTMLButtonElement>(null)
+  const terminalTabRef = useRef<HTMLButtonElement>(null)
   const [indicator, setIndicator] = useState({ left: 0, width: 0 })
 
   const measureIndicator = useCallback(() => {
-    const el = activeTab === 'overview' ? overviewTabRef.current : smsTabRef.current
+    const el =
+      activeTab === 'overview'
+        ? overviewTabRef.current
+        : activeTab === 'sms'
+          ? smsTabRef.current
+          : terminalTabRef.current
     if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth })
   }, [activeTab])
 
@@ -225,6 +232,17 @@ export function SettingsCard({
               <MessageSquare className="size-4" />
               短信
             </button>
+            <button
+              ref={terminalTabRef}
+              type="button"
+              onClick={() => setActiveTab('terminal')}
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'terminal' ? 'text-brand' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Terminal className="size-4" />
+              终端
+            </button>
             <span
               aria-hidden="true"
               className="absolute -bottom-px h-0.5 rounded-full bg-brand transition-[left,width] duration-200 ease-out"
@@ -342,8 +360,10 @@ export function SettingsCard({
               </li>
             </ul>
           </div>
-        ) : (
+        ) : activeTab === 'sms' ? (
           <SmsView device={device} moduleService={moduleService} />
+        ) : (
+          <TerminalView device={device} moduleService={moduleService} />
         )}
       </div>
 
