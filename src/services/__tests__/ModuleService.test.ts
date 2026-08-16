@@ -11,6 +11,7 @@ const createMockUsb = (): any => {
     connect: vi.fn(),
     send: vi.fn(),
     read: vi.fn(),
+    readUntil: vi.fn(),
     close: vi.fn(),
   }
 }
@@ -920,5 +921,141 @@ describe('ModuleService.sendAtCommand', () => {
     )
     // sendAtCommand 刻意不做 withRetry：只 connect 一次，不会重发。
     expect(usb.connect).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('ModuleService.dial', () => {
+  it('sends ATD<number>; and returns the raw call result', async () => {
+    const usb = createMockUsb()
+    usb.readUntil.mockResolvedValue('OK')
+    const service = new ModuleService(usb)
+
+    const response = await service.dial(createMockDevice(0x2c7c, 0x0125), '13800138000')
+
+    // 末尾分号必需，否则被当作数据呼叫。
+    expect(usb.send).toHaveBeenCalledWith('ATD13800138000;')
+    expect(usb.connect).toHaveBeenCalledWith(expect.anything())
+    expect(response).toBe('OK')
+    // 拨号走 readUntil（终止条件含 NO CARRIER / BUSY 等），不依赖 read()。
+    expect(usb.read).not.toHaveBeenCalled()
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('rejects an empty number without sending anything', async () => {
+    const usb = createMockUsb()
+    const service = new ModuleService(usb)
+
+    await expect(service.dial(createMockDevice(0x2c7c, 0x0125), '   ')).rejects.toThrow(
+      '号码为空',
+    )
+    expect(usb.send).not.toHaveBeenCalled()
+    expect(usb.connect).not.toHaveBeenCalled()
+  })
+})
+
+describe('ModuleService.hangup', () => {
+  it('sends ATH and waits for a call result', async () => {
+    const usb = createMockUsb()
+    usb.readUntil.mockResolvedValue('NO CARRIER')
+    const service = new ModuleService(usb)
+
+    await expect(
+      service.hangup(createMockDevice(0x2c7c, 0x0125)),
+    ).resolves.toBe('NO CARRIER')
+
+    expect(usb.send).toHaveBeenCalledWith('ATH')
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+})
+
+describe('ModuleService.queryCurrentCalls', () => {
+  it('parses +CLCC entries into current calls (outgoing active + incoming)', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue(
+      'AT+CLCC\r\n+CLCC: 1,0,0,0,0,"13800138000",129\r\n+CLCC: 2,1,4,0,0,"*98#",129\r\nOK',
+    )
+    const service = new ModuleService(usb)
+
+    const calls = await service.queryCurrentCalls(createMockDevice(0x2c7c, 0x0125))
+
+    // <dir>=0 拨出，<dir>=1 呼入；<stat>=0 通话中、4 呼入等待。
+    expect(calls).toEqual([
+      { id: 1, direction: 'outgoing', status: 0, number: '13800138000' },
+      { id: 2, direction: 'incoming', status: 4, number: '*98#' },
+    ])
+    expect(usb.send).toHaveBeenCalledWith('AT+CLCC')
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('tolerates URC noise and entries without a number field', async () => {
+    const usb = createMockUsb()
+    usb.read.mockResolvedValue('+CLCC: 1,0,2,0,0\r\n+CLCC: 2,0,3,0,0,"10086",129\r\nOK')
+    const service = new ModuleService(usb)
+
+    const calls = await service.queryCurrentCalls(createMockDevice(0x2c7c, 0x0125))
+
+    expect(calls).toEqual([
+      { id: 1, direction: 'outgoing', status: 2, number: '' },
+      { id: 2, direction: 'outgoing', status: 3, number: '10086' },
+    ])
+  })
+})
+
+describe('ModuleService.listCallHistory', () => {
+  it('reads DC/MC/RC storages and parses CPBR entries', async () => {
+    const usb = createMockUsb()
+    usb.read
+      .mockResolvedValueOnce('OK') // AT+CPBS="DC"
+      .mockResolvedValueOnce('+CPBR: 1,"+8613800138000",129\r\nOK')
+      .mockResolvedValueOnce('OK') // AT+CPBS="MC"
+      .mockResolvedValueOnce('+CPBR: 1,"10086",129\r\nOK')
+      .mockResolvedValueOnce('OK') // AT+CPBS="RC"
+      .mockResolvedValueOnce('+CPBR: 1,"10010",129\r\nOK')
+    const service = new ModuleService(usb)
+
+    const records = await service.listCallHistory(createMockDevice(0x2c7c, 0x0125))
+
+    expect(records).toEqual([
+      { id: 1, number: '+8613800138000', type: 'dialed', timestamp: '' },
+      { id: 1, number: '10086', type: 'missed', timestamp: '' },
+      { id: 1, number: '10010', type: 'received', timestamp: '' },
+    ])
+    expect(usb.send).toHaveBeenCalledWith('AT+CPBS="DC"')
+    expect(usb.send).toHaveBeenCalledWith('AT+CPBS="MC"')
+    expect(usb.send).toHaveBeenCalledWith('AT+CPBS="RC"')
+    expect(usb.send).toHaveBeenCalledWith('AT+CPBR=1,20')
+    expect(usb.close).not.toHaveBeenCalled()
+  })
+
+  it('skips a storage that returns CME ERROR (unsupported)', async () => {
+    const usb = createMockUsb()
+    usb.read
+      .mockResolvedValueOnce('+CME ERROR: 22') // DC 不支持
+      .mockResolvedValueOnce('OK') // AT+CPBS="MC"
+      .mockResolvedValueOnce('+CPBR: 1,"10086",129\r\nOK')
+      .mockResolvedValueOnce('OK') // AT+CPBS="RC"
+      .mockResolvedValueOnce('+CPBR: 1,"10010",129\r\nOK')
+    const service = new ModuleService(usb)
+
+    const records = await service.listCallHistory(createMockDevice(0x2c7c, 0x0125))
+
+    expect(records).toEqual([
+      { id: 1, number: '10086', type: 'missed', timestamp: '' },
+      { id: 1, number: '10010', type: 'received', timestamp: '' },
+    ])
+  })
+
+  it('skips empty-number CPBR entries', async () => {
+    const usb = createMockUsb()
+    usb.read
+      .mockResolvedValueOnce('OK')
+      .mockResolvedValueOnce('+CPBR: 1,"",129\r\n+CPBR: 2,"10086",129\r\nOK')
+      .mockResolvedValueOnce('+CME ERROR: 22')
+      .mockResolvedValueOnce('+CME ERROR: 22')
+    const service = new ModuleService(usb)
+
+    const records = await service.listCallHistory(createMockDevice(0x2c7c, 0x0125))
+
+    expect(records).toEqual([{ id: 2, number: '10086', type: 'dialed', timestamp: '' }])
   })
 })

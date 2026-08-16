@@ -22,6 +22,7 @@ import {
   AT_USBNET_RNDIS,
   AT_QNWINFO,
   AT_CREG,
+  AT_CEREG,
   AT_CGSN,
   AT_QCCID,
   AT_CIMI,
@@ -30,6 +31,14 @@ import {
   AT_CPIN,
   AT_CMGF_PDU,
   AT_CMGL_PDU,
+  AT_QCFG_IMS,
+  AT_QCFG_VOLTE_DISABLE,
+  AT_QCFG_SERVDOMAIN,
+  AT_CLCC,
+  AT_CPBS_DC,
+  AT_CPBS_MC,
+  AT_CPBS_RC,
+  AT_CPBR,
   RECONNECT_WAIT_MS,
   MODE_RECONNECT_WAIT_MS,
 } from '../constants'
@@ -46,6 +55,9 @@ import type {
   SmsMessage,
   SmsStatus,
   UsbConfig,
+  CallRecord,
+  CallRecordType,
+  CurrentCall,
 } from '../types'
 import { parsePdu, type ConcatInfo } from '../utils/pdu'
 import { deriveQadbKey } from '../utils/qadbkey'
@@ -564,6 +576,236 @@ export class ModuleService {
       ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
       throw e
     }
+  }
+
+  // --- 通话（3GPP TS 27.007；本版仅拨出，呼入 URC 不处理）---
+
+  // 呼叫类指令应答的终止条件：拨号可能立即返回 NO CARRIER / BUSY / NO ANSWER /
+  // NO DIALTONE（立即失败）或 CONNECT（立即接通），不只有 OK/ERROR。
+  private static readonly CALL_RESULT =
+    /OK|ERROR|NO CARRIER|BUSY|NO ANSWER|NO DIALTONE|CONNECT/
+
+  /**
+   * 拨号（语音呼叫）。ATD 末尾分号必需，否则被当作数据呼叫。
+   * 刻意不做 withRetry：重拨是副作用操作，超时重发会导致重复拨号。
+   * 返回原始响应（含回显），由调用方判断 OK / NO CARRIER 等。
+   */
+  async dial(device: USBDevice, number: string): Promise<string> {
+    const target = number.trim()
+    if (!target) throw new Error('号码为空')
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        await this.usb.connect(device)
+        await this.usb.send(`ATD${target};`)
+        const response = await this.usb.readUntil((buf) =>
+          ModuleService.CALL_RESULT.test(buf),
+        )
+        this.log(`dial response: ${JSON.stringify(response)}`)
+        return response
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /** 挂断当前通话（ATH）。不做 withRetry（副作用操作）。 */
+  async hangup(device: USBDevice): Promise<string> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        await this.usb.connect(device)
+        await this.usb.send('ATH')
+        const response = await this.usb.readUntil((buf) =>
+          ModuleService.CALL_RESULT.test(buf),
+        )
+        this.log(`hangup response: ${JSON.stringify(response)}`)
+        return response
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /** 接听呼入（ATA）。不做 withRetry（副作用操作）。返回原始响应。 */
+  async answer(device: USBDevice): Promise<string> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        await this.usb.connect(device)
+        await this.usb.send('ATA')
+        const response = await this.usb.readUntil((buf) =>
+          ModuleService.CALL_RESULT.test(buf),
+        )
+        this.log(`answer response: ${JSON.stringify(response)}`)
+        return response
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /** 发送 DTMF 音（AT+VTS，tone 为单个数字或星号/井号）。 */
+  async sendDtmf(device: USBDevice, tone: string): Promise<void> {
+    this.diagnostics = []
+    try {
+      await this.runExclusive(async () => {
+        await this.usb.connect(device)
+        await this.usb.send(`AT+VTS="${tone}"`)
+        const response = await this.usb.readUntil((buf) =>
+          ModuleService.CALL_RESULT.test(buf),
+        )
+        this.log(`vts response: ${JSON.stringify(response)}`)
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 查询当前通话列表（AT+CLCC），解析为 CurrentCall[]。只读、幂等，可自动重试一次。
+   */
+  async queryCurrentCalls(device: USBDevice): Promise<CurrentCall[]> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          await this.usb.send(AT_CLCC)
+          const response = await this.usb.read()
+          this.log(`clcc response: ${JSON.stringify(response)}`)
+          return ModuleService.parseClcc(response)
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /**
+   * 查询语音承载（只读）：IMS/VoLTE 配置 + VoLTE 开关 + 服务域 + EPS 注册状态。
+   * 用于判断通话走 VoLTE（PS 域）还是 CS 回落（电路交换）。返回各命令原始响应，
+   * 供诊断展示（不复解析——不同固件响应格式有差异）。
+   */
+  async queryVoiceBearer(device: USBDevice): Promise<string> {
+    const queries: ReadonlyArray<readonly [string, string]> = [
+      ['IMS/VoLTE 配置', AT_QCFG_IMS],
+      ['VoLTE 开关', AT_QCFG_VOLTE_DISABLE],
+      ['服务域', AT_QCFG_SERVDOMAIN],
+      ['EPS 注册', AT_CEREG],
+    ]
+    const parts: string[] = []
+    for (const [label, command] of queries) {
+      try {
+        const response = await this.sendAtCommand(device, command)
+        parts.push(`${label}（${command}）:\n${response}`)
+      } catch (err) {
+        parts.push(
+          `${label}（${command}）出错：${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    }
+    return parts.join('\n\n')
+  }
+
+  /**
+   * 查询 VoLTE 是否可用（只读）：AT+QCFG="ims" 的第二个字段 volte_cap 是否为 1。
+   * 这是动态值（跟随 IMS 注册），VoLTE 未开通的 SIM（如联通卡）恒为 0。
+   * 解析失败（响应无 ims 行）按不可用处理，由 UI 提示「未启用 VoLTE」。
+   */
+  async queryVolteCapable(device: USBDevice): Promise<boolean> {
+    const response = await this.sendAtCommand(device, AT_QCFG_IMS)
+    const match = response.match(/\+QCFG:\s*"ims"\s*,\s*(\d+)\s*,\s*(\d+)/i)
+    if (!match) return false
+    return match[2] === '1'
+  }
+
+  /**
+   * 查询通话记录：模块优先（CPBS 选 DC/MC/RC + CPBR 读条目）。
+   * 模块不支持或读不到时返回空数组（由 UI 层回退本地记录）。
+   */
+  async listCallHistory(device: USBDevice): Promise<CallRecord[]> {
+    this.diagnostics = []
+    try {
+      return await this.runExclusive(async () => {
+        return await this.withRetry(async () => {
+          await this.usb.connect(device)
+          return [
+            ...(await this.readCallRecords(AT_CPBS_DC, 'dialed')),
+            ...(await this.readCallRecords(AT_CPBS_MC, 'missed')),
+            ...(await this.readCallRecords(AT_CPBS_RC, 'received')),
+          ]
+        })
+      })
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      ;(e as { diagnostics?: string }).diagnostics = this.diagnostics.join('\n')
+      throw e
+    }
+  }
+
+  /** 选择 CPBS 存储并读 CPBR 条目；存储不支持（CME ERROR）时返回空。 */
+  private async readCallRecords(
+    storageCommand: string,
+    type: CallRecordType,
+  ): Promise<CallRecord[]> {
+    await this.usb.send(storageCommand)
+    const selResponse = await this.usb.read()
+    this.log(`cpbs select ${storageCommand}: ${JSON.stringify(selResponse)}`)
+    if (!selResponse.includes('OK')) return []
+    await this.usb.send(AT_CPBR)
+    const listResponse = await this.usb.read()
+    this.log(`cpbr response: ${JSON.stringify(listResponse)}`)
+    return ModuleService.parseCpbr(listResponse, type)
+  }
+
+  /** 解析 AT+CLCC：+CLCC: <id>,<dir>,<stat>,<mode>,<mpty>[,<number>,<type>]。 */
+  private static parseClcc(raw: string): CurrentCall[] {
+    const calls: CurrentCall[] = []
+    const re =
+      /\+CLCC:\s*(\d+)\s*,\s*([01])\s*,\s*(\d)\s*,\s*(\d)\s*,\s*(\d)(?:\s*,\s*"([^"]*)"(?:\s*,\s*\d+)?)?/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(raw))) {
+      // mode（第 4 字段）：0=语音，1=数据，2=传真。只保留语音呼叫。
+      // QDC507 的 CLCC 会常驻 mode=1、号码空的非语音条目（IMS 信令），通话结束后真实
+      // 语音条目（mode=0）消失但残留条目仍在，若不过滤会被误判为「仍有活跃通话」，
+      // 导致对方挂断后 UI 不结束（对齐 celldock-for-mac 的 isVoice == mode==0 过滤）。
+      if (Number(m[4]) !== 0) continue
+      calls.push({
+        id: Number(m[1]),
+        direction: m[2] === '0' ? 'outgoing' : 'incoming',
+        status: Number(m[3]),
+        number: m[6] ?? '',
+      })
+    }
+    return calls
+  }
+
+  /**
+   * 解析 AT+CPBR：+CPBR: <index>,<number>,<type>[,<text>[,<date>,<time>]]。
+   * 各固件字段差异大（可能带/不带日期时间），只取 index + number；时间戳留空，
+   * 由 UI 以「—」占位。
+   */
+  private static parseCpbr(raw: string, type: CallRecordType): CallRecord[] {
+    const records: CallRecord[] = []
+    const re = /\+CPBR:\s*(\d+)\s*,\s*"([^"]*)"\s*,(\d+)/g
+    let m: RegExpExecArray | null
+    while ((m = re.exec(raw))) {
+      const number = m[2].trim()
+      if (!number) continue
+      records.push({ id: Number(m[1]), number, type, timestamp: '' })
+    }
+    return records
   }
 
   /** 发送一条只读 AT 指令并等待应答；read() 累积到 OK/ERROR 为止。 */

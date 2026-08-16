@@ -69,3 +69,17 @@ export const SMS_REFRESH_MS = 5_000
 // Chromium usb_device_handle_win.cc），加超时让探测快速失败而非卡死——
 // 否则挂起的原生调用在页面刷新时残留，触发浏览器崩溃。
 export const CONNECT_STEP_TIMEOUT_MS = 2_000
+
+// 语音承载 / VoLTE（只读，判断通话走 VoLTE 还是 CS 回落）。
+export const AT_QCFG_IMS = 'AT+QCFG="ims"' // IMS 配置 + VoLTE 能力（+QCFG: "ims",<state>,<volte_cap>）
+export const AT_QCFG_VOLTE_DISABLE = 'AT+QCFG="volte_disable"' // VoLTE 开关（+QCFG: "volte/disable",<0|1>）
+export const AT_QCFG_SERVDOMAIN = 'AT+QCFG="servdomain"' // 服务域（1=CS only，2=PS only，3=CS+PS）
+export const AT_CEREG = 'AT+CEREG?' // EPS 网络注册（+CEREG: <n>,<stat>，stat=1/5 为 LTE 已注册）
+
+// 通话（3GPP TS 27.007）。拨号/挂断由 ModuleService 动态拼装（ATD<号码>; / ATH）。
+export const AT_CLCC = 'AT+CLCC' // 当前通话列表
+export const AT_CPBS_QUERY = 'AT+CPBS?' // 查询当前电话本存储
+export const AT_CPBS_DC = 'AT+CPBS="DC"' // 拨出记录存储
+export const AT_CPBS_MC = 'AT+CPBS="MC"' // 未接记录存储
+export const AT_CPBS_RC = 'AT+CPBS="RC"' // 已接记录存储
+export const AT_CPBR = 'AT+CPBR=1,20' // 读通话记录条目（范围以真机 AT+CPBR=? 为准）

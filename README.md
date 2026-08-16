@@ -16,7 +16,8 @@
 - 一键修改 / 恢复模块的 USB 设备标识
 - 查看运行状态：网络模式、频段、信道、注册状态、信号强度
 - 查看设备信息：IMEI、ICCID、IMSI、本机号码
-- 查看短信：按号码查看会话
+- 接打电话：VoLTE 语音通话、来电通知
+- 查看短信：按号码查看会话、验证码聚合
 - 切换工作模式：QMI / ECM / MBIM / RNDIS
 - 配置 USB 功能：diag / nmea / at / modem / rmnet / adb / uac
 - 全程在浏览器内完成，支持 Chrome / Edge 桌面版
@@ -43,3 +44,11 @@ React · TypeScript · Tailwind CSS · Vite
 ## 免责声明
 
 本工具用于在**自己的设备**上调整 USB 设备标识。修改设备标识可能导致保修失效、设备异常或无法被部分软件识别，请确认了解相关风险后再操作。作者不对任何设备损坏、数据丢失或其他后果承担责任。
+
+## 致谢
+
+感谢以下项目及其贡献者：
+
+- [celldock/celldock-for-mac](https://github.com/celldock/celldock-for-mac/)
+- [rogerbush007-a11y/DJOneHub-mac-enhanced](https://github.com/rogerbush007-a11y/DJOneHub-mac-enhanced/)
+- [moluncn/mavo](https://github.com/moluncn/mavo/)

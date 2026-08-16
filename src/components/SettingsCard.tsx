@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Antenna, LayoutGrid, MessageSquare, Network, Plane, Terminal, Usb, X } from 'lucide-react'
+import { Antenna, LayoutGrid, MessageSquare, Network, Phone, Plane, Terminal, Usb, X } from 'lucide-react'
 import type { UsbnetMode, FuncMode, NwScanMode, SetUsbnetModeResult } from '../types'
 import type { ModuleService } from '../services/ModuleService'
+import { saveLocalCall, nowStamp } from '../utils/callHistory'
 import { ModuleComputerIllustration } from './icons'
 import { ModeSelect } from './ModeSelect'
 import { FuncModeSelect } from './FuncModeSelect'
@@ -11,6 +12,8 @@ import { UsbFunctionDialog } from './UsbFunctionDialog'
 import { DeviceTelemetry } from './DeviceTelemetry'
 import { SmsView } from './SmsView'
 import { TerminalView } from './TerminalView'
+import { PhoneView } from './PhoneView'
+import { CallDialog } from './CallDialog'
 
 interface Props {
   device: USBDevice
@@ -25,6 +28,9 @@ interface Props {
 }
 
 type QueryState = 'loading' | 'ready' | 'error'
+
+/** 语音服务状态：检查中 / VoLTE 未启用 / ADB 未开 / USB 音频未开 / 已就绪 / 出错。 */
+type DriverState = 'checking' | 'noVolte' | 'adbOff' | 'audioOff' | 'loaded' | 'error'
 
 export function SettingsCard({
   device,
@@ -46,25 +52,144 @@ export function SettingsCard({
   // 功能模式切换后射频状态改变，递增以触发运行状态重新查询。
   const [telemetryVersion, setTelemetryVersion] = useState(0)
   // 当前选项卡：概览（运行状态/设备信息/模式设置）、短信或终端。
-  const [activeTab, setActiveTab] = useState<'overview' | 'sms' | 'terminal'>('overview')
+  const [activeTab, setActiveTab] = useState<'overview' | 'phone' | 'sms' | 'terminal'>(
+    'overview',
+  )
   // 「USB 功能」对话框开关。
   const [usbFunctionOpen, setUsbFunctionOpen] = useState(false)
   // 原始标识横幅是否已被用户关闭。
   const [bannerDismissed, setBannerDismissed] = useState(false)
+  // 通话状态（全局，任意 Tab 都能弹通话对话框）。
+  const [callNumber, setCallNumber] = useState<string | null>(null)
+  const [callMode, setCallMode] = useState<'dial' | 'incoming'>('dial')
+  // 语音服务状态（全局检查，供 PhoneView 置灰拨号 + 来电轮询门槛）。
+  const [driverState, setDriverState] = useState<DriverState>('checking')
+  const [driverError, setDriverError] = useState<string | null>(null)
+  const [driverDismissed, setDriverDismissed] = useState(false)
+  // 通话记录版本号：通话结束递增，通知 PhoneView 刷新记录。
+  const [callLogVersion, setCallLogVersion] = useState(0)
 
   // Tab 滑动指示条：记录激活按钮的位置与宽度，用于定位下划线。
   const overviewTabRef = useRef<HTMLButtonElement>(null)
+  const phoneTabRef = useRef<HTMLButtonElement>(null)
   const smsTabRef = useRef<HTMLButtonElement>(null)
   const terminalTabRef = useRef<HTMLButtonElement>(null)
   const [indicator, setIndicator] = useState({ left: 0, width: 0 })
+
+  // 按优先级短路检查：VoLTE → ADB → USB 音频。驱动加载不在此判定（首次通话时 setup 的
+  // prepare 会自动加载）。
+  const refreshDriver = useCallback(async () => {
+    setDriverState('checking')
+    setDriverError(null)
+    try {
+      const volteOk = await moduleService.queryVolteCapable(device)
+      if (!volteOk) {
+        setDriverState('noVolte')
+        return
+      }
+      const cfg = await moduleService.queryUsbConfig(device)
+      if (!cfg.adb) {
+        setDriverState('adbOff')
+        return
+      }
+      if (!cfg.audio) {
+        setDriverState('audioOff')
+        return
+      }
+      setDriverState('loaded')
+    } catch (err) {
+      setDriverState('error')
+      setDriverError(err instanceof Error ? err.message : String(err))
+    }
+  }, [device, moduleService])
+
+  useEffect(() => {
+    refreshDriver()
+  }, [refreshDriver])
+
+  // 发送来电通知（首次请求权限；tag 去重，避免同一通来电重复弹通知）。
+  const notifyIncoming = useCallback(async (number: string) => {
+    if (typeof Notification === 'undefined') return
+    try {
+      let permission = Notification.permission
+      if (permission === 'default') {
+        permission = await Notification.requestPermission()
+      }
+      if (permission === 'granted') {
+        new Notification('来电', {
+          body: number || '未知号码',
+          tag: 'cellularswitch-incoming-call',
+        })
+      }
+    } catch {
+      // 非 secure context 或 Notification 不可用时忽略。
+    }
+  }, [])
+
+  // 检测呼入（仅「语音服务已就绪」时轮询 CLCC，检测呼入振铃 status=4）。全局：任意 Tab 都检测。
+  const incomingNotified = useRef(false)
+  useEffect(() => {
+    if (callNumber !== null || driverState !== 'loaded') return
+    incomingNotified.current = false
+    const id = setInterval(async () => {
+      try {
+        const calls = await moduleService.queryCurrentCalls(device)
+        const incoming = calls.find((c) => c.direction === 'incoming' && c.status === 4)
+        if (incoming && !incomingNotified.current) {
+          incomingNotified.current = true
+          const num = incoming.number || '未知号码'
+          notifyIncoming(num)
+          setCallMode('incoming')
+          setCallNumber(num)
+        }
+      } catch {
+        // 轮询失败忽略。
+      }
+    }, 2000)
+    return () => clearInterval(id)
+  }, [callNumber, driverState, device, moduleService, notifyIncoming])
+
+  // 呼入接通后记录通话历史（received）。
+  const handleIncomingConnected = useCallback(() => {
+    saveLocalCall({
+      id: Date.now(),
+      number: callNumber ?? '',
+      type: 'received',
+      timestamp: nowStamp(),
+    })
+  }, [callNumber])
+
+  // 呼入未接记录通话历史（missed）。
+  const handleIncomingMissed = useCallback(() => {
+    saveLocalCall({
+      id: Date.now(),
+      number: callNumber ?? '',
+      type: 'missed',
+      timestamp: nowStamp(),
+    })
+  }, [callNumber])
+
+  // 通话结束：关闭对话框 + 递增版本号通知 PhoneView 刷新记录。
+  const handleCallClose = useCallback(() => {
+    setCallNumber(null)
+    setCallLogVersion((v) => v + 1)
+  }, [])
+
+  // 拨号（来自 PhoneView 的 onDial 回调）：打开通话对话框（拨出模式）。
+  const handleDial = useCallback((number: string) => {
+    setCallMode('dial')
+    setCallNumber(number)
+  }, [])
 
   const measureIndicator = useCallback(() => {
     const el =
       activeTab === 'overview'
         ? overviewTabRef.current
-        : activeTab === 'sms'
-          ? smsTabRef.current
-          : terminalTabRef.current
+        : activeTab === 'phone'
+          ? phoneTabRef.current
+          : activeTab === 'sms'
+            ? smsTabRef.current
+            : terminalTabRef.current
     if (el) setIndicator({ left: el.offsetLeft, width: el.offsetWidth })
   }, [activeTab])
 
@@ -222,6 +347,17 @@ export function SettingsCard({
               概览
             </button>
             <button
+              ref={phoneTabRef}
+              type="button"
+              onClick={() => setActiveTab('phone')}
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium transition-colors ${
+                activeTab === 'phone' ? 'text-brand' : 'text-gray-500 hover:text-gray-700'
+              }`}
+            >
+              <Phone className="size-4" />
+              电话
+            </button>
+            <button
               ref={smsTabRef}
               type="button"
               onClick={() => setActiveTab('sms')}
@@ -360,12 +496,39 @@ export function SettingsCard({
               </li>
             </ul>
           </div>
-        ) : activeTab === 'sms' ? (
-          <SmsView device={device} moduleService={moduleService} />
         ) : (
-          <TerminalView device={device} moduleService={moduleService} />
+          <>
+            {/* 电话视图常驻挂载（非 phone 时 CSS 隐藏），保证来电轮询在任意 Tab 都运行。 */}
+            <div className={activeTab === 'phone' ? '' : 'hidden'}>
+              <PhoneView
+                driverState={driverState}
+                driverError={driverError}
+                driverDismissed={driverDismissed}
+                onDismissDriver={() => setDriverDismissed(true)}
+                onDial={handleDial}
+                callLogVersion={callLogVersion}
+                isInCall={callNumber !== null}
+                onRetryDriver={refreshDriver}
+              />
+            </div>
+            {activeTab === 'sms' && <SmsView device={device} moduleService={moduleService} />}
+            {activeTab === 'terminal' && (
+              <TerminalView device={device} moduleService={moduleService} />
+            )}
+          </>
         )}
       </div>
+
+      <CallDialog
+        open={callNumber !== null}
+        mode={callMode}
+        number={callNumber ?? ''}
+        device={device}
+        moduleService={moduleService}
+        onClose={handleCallClose}
+        onConnected={handleIncomingConnected}
+        onMissed={handleIncomingMissed}
+      />
 
       <ModeSwitchDialog
         open={switching !== null}

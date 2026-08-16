@@ -28,11 +28,22 @@ import {
   type AdbHeader,
 } from '../utils/adbProtocol'
 import { getOrCreateKeyPair, signToken, exportAdbPublicKey } from '../utils/adbCrypto'
+import {
+  SYNC_CHUNK_CAPACITY,
+  checkedShellCommand,
+  parseCheckedShellOutput,
+  parseSyncHeader,
+  shellToken,
+  syncHeader,
+  syncPacket,
+} from '../utils/adbSync'
 
 // ADB 读超时：握手/流转阶段的单次 transferIn 上限。空闲时超时由流转循环吞掉并继续。
 const ADB_READ_TIMEOUT_MS = 5_000
 // open/selectConfiguration/claimInterface 这类原生调用的超时（同 UsbService 风格）。
 const ADB_STEP_TIMEOUT_MS = 2_000
+// 一次性 shell 命令的输出上限（对齐参考实现 1 MiB）。
+const MAX_SHELL_OUTPUT = 1_048_576
 
 export interface AdbShellCallbacks {
   onData: (chunk: Uint8Array) => void
@@ -367,6 +378,159 @@ export class AdbService {
     this.inEndpoint = 0
     this.pending = new Uint8Array(0)
     this.device = null
+  }
+
+  // --- 一次性 shell / sync 推送 ---
+
+  /**
+   * 打开一条 ADB 服务流（destination 形如 "shell:" / "shell:<cmd>" / "sync:"，
+   * 自动补结尾 NUL）。返回 { localId, remoteId } 供一次性读写。
+   * 用阻塞读等待 A_OKAY：无内部超时，由调用方（runCommand/push 的 withTimeout）兜底。
+   */
+  private async openService(destination: string): Promise<{ localId: number; remoteId: number }> {
+    const localId = ++this.localIdCounter
+    await this.send(A_OPEN, localId, 0, encoder.encode(`${destination}\0`))
+    while (true) {
+      const { header } = await this.recvMessage(true)
+      if (header.command === A_OKAY && header.arg1 === localId) {
+        return { localId, remoteId: header.arg0 }
+      }
+      if (header.command === A_CLSE && header.arg1 === localId) {
+        throw new Error('adbd 拒绝打开服务')
+      }
+      // 其它消息忽略。
+    }
+  }
+
+  /**
+   * 执行一条一次性 shell 命令并返回 { output, status }。
+   * 命令被包成子 shell + 退出码标记（checkedShellCommand），从回显反解退出状态。
+   * 静默期（如 insmod 耗时数秒）由阻塞读 + 整体 withTimeout 容忍。
+   */
+  async runCommand(
+    command: string,
+    timeoutMs = 20_000,
+  ): Promise<{ output: string; status: number }> {
+    return this.withTimeout(this.runCommandInner(command), timeoutMs)
+  }
+
+  private async runCommandInner(
+    command: string,
+  ): Promise<{ output: string; status: number }> {
+    const token = shellToken()
+    const wrapped = checkedShellCommand(command, token)
+    const { localId, remoteId } = await this.openService(`shell:${wrapped}`)
+    let output = new Uint8Array(0)
+    try {
+      while (true) {
+        const { header, data } = await this.recvMessage(true)
+        if (header.command === A_WRTE && header.arg1 === localId) {
+          output = concatBytes([output, data])
+          if (output.length > MAX_SHELL_OUTPUT) throw new Error('模块 shell 输出过大')
+          await this.send(A_OKAY, localId, remoteId)
+        } else if (header.command === A_CLSE && header.arg1 === localId) {
+          // 无论正常/异常关闭都回 A_CLSE，关闭本地流——否则 adbd 侧的 shell 服务流
+          // 长期累积到上限，长时间连接后会「拒绝打开服务」。
+          await this.send(A_CLSE, localId, remoteId).catch(() => {})
+          break
+        }
+      }
+    } catch (err) {
+      await this.send(A_CLSE, localId, remoteId).catch(() => {})
+      throw err
+    }
+    return parseCheckedShellOutput(new TextDecoder().decode(output), token)
+  }
+
+  /**
+   * 通过 ADB sync 协议推送一个文件到模块（SEND → DATA 分块 → DONE → 读 OKAY/FAIL）。
+   * mode 为「S_IFREG | 权限位」的十进制（如 0o100644 = 33188）。
+   */
+  async push(
+    data: Uint8Array<ArrayBuffer>,
+    remotePath: string,
+    mode: number,
+    modifiedAt = Math.floor(Date.now() / 1000),
+  ): Promise<void> {
+    return this.withTimeout(this.pushInner(data, remotePath, mode, modifiedAt), 30_000)
+  }
+
+  private async pushInner(
+    data: Uint8Array<ArrayBuffer>,
+    remotePath: string,
+    mode: number,
+    modifiedAt: number,
+  ): Promise<void> {
+    if (!remotePath || remotePath.includes(',') || remotePath.includes('\0')) {
+      throw new Error('ADB push 目标路径无效')
+    }
+    const { localId, remoteId } = await this.openService('sync:')
+    try {
+      await this.writeSyncFrame(
+        syncPacket('SEND', encoder.encode(`${remotePath},${mode}`)),
+        localId,
+        remoteId,
+      )
+      for (let offset = 0; offset < data.length; offset += SYNC_CHUNK_CAPACITY) {
+        const chunk = data.slice(offset, Math.min(offset + SYNC_CHUNK_CAPACITY, data.length))
+        await this.writeSyncFrame(syncPacket('DATA', chunk), localId, remoteId)
+      }
+      await this.writeSyncFrame(syncHeader('DONE', modifiedAt), localId, remoteId)
+
+      // 读 8 字节 sync 响应（OKAY/FAIL）。
+      let response = new Uint8Array(0)
+      while (response.length < 8) {
+        const { header, data: payload } = await this.recvMessage(true)
+        if (header.command === A_WRTE && header.arg1 === localId) {
+          response = concatBytes([response, payload])
+          await this.send(A_OKAY, localId, remoteId)
+        } else if (header.command === A_CLSE && header.arg1 === localId) {
+          throw new Error('模块提前关闭 sync 流')
+        }
+      }
+      const { identifier, value } = parseSyncHeader(response)
+      if (identifier === 'FAIL') {
+        const length = value
+        if (length > MAX_SHELL_OUTPUT) throw new Error('模块 sync 失败消息过大')
+        while (response.length < 8 + length) {
+          const { header, data: payload } = await this.recvMessage(true)
+          if (header.command === A_WRTE && header.arg1 === localId) {
+            response = concatBytes([response, payload])
+            await this.send(A_OKAY, localId, remoteId)
+          } else if (header.command === A_CLSE && header.arg1 === localId) {
+            break
+          }
+        }
+        const detail = new TextDecoder().decode(response.slice(8, 8 + length))
+        throw new Error(`模块拒绝文件传输：${detail}`)
+      }
+      if (identifier !== 'OKAY' || value !== 0) {
+        throw new Error('模块 sync 返回无效状态')
+      }
+      await this.send(A_CLSE, localId, remoteId).catch(() => {})
+    } catch (err) {
+      await this.send(A_CLSE, localId, remoteId).catch(() => {})
+      throw err
+    }
+  }
+
+  /** 发送一条 sync 帧并等待设备 transport 层 OKAY（流控 ACK）。 */
+  private async writeSyncFrame(
+    frame: Uint8Array<ArrayBuffer>,
+    localId: number,
+    remoteId: number,
+  ): Promise<void> {
+    await this.send(A_WRTE, localId, remoteId, frame)
+    while (true) {
+      const { header } = await this.recvMessage(true)
+      if (header.command === A_OKAY && header.arg0 === remoteId && header.arg1 === localId) {
+        return
+      }
+      if (header.command === A_CLSE && header.arg1 === localId) {
+        throw new Error('模块提前关闭 sync 流')
+      }
+      // 其它消息忽略。
+    }
   }
 
   // --- 底层收发 ---

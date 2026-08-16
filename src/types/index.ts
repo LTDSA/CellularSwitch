@@ -107,3 +107,27 @@ export interface SmsMessage {
   /** 正文（UCS2 解码后）。 */
   text: string
 }
+
+/** 通话记录方向类型。 */
+export type CallRecordType = 'dialed' | 'received' | 'missed'
+
+/** 一条通话记录（来自模块 CPBR 查询，或本地兜底记录）。 */
+export interface CallRecord {
+  /** 唯一标识：模块记录为 CPBR 存储位置，本地记录为 Date.now() 时间戳。 */
+  id: number
+  /** 对方号码。 */
+  number: string
+  type: CallRecordType
+  /** 时间戳字符串（模块记录可能为空，UI 以「—」占位）。 */
+  timestamp: string
+}
+
+/** 当前通话（AT+CLCC 解析）。 */
+export interface CurrentCall {
+  id: number
+  /** 方向：0=MO(拨出) → outgoing，1=MT(呼入) → incoming。 */
+  direction: 'outgoing' | 'incoming'
+  /** 3GPP 27.007 状态：0 通话中 / 1 保持 / 2 拨号中 / 3 振铃中 / 4 呼入 / 5 等待。 */
+  status: number
+  number: string
+}
