@@ -339,10 +339,10 @@ export function CallDialog({ open, mode, number, device, moduleService, onClose,
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { deviceId: { exact: ac.deviceId } },
         })
-        const mimeType = MediaRecorder.isTypeSupported('audio/webm')
-          ? 'audio/webm'
-          : MediaRecorder.isTypeSupported('audio/mp4')
-            ? 'audio/mp4'
+        const mimeType = MediaRecorder.isTypeSupported('audio/mp4')
+          ? 'audio/mp4'
+          : MediaRecorder.isTypeSupported('audio/webm')
+            ? 'audio/webm'
             : ''
         const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined)
         const chunks: Blob[] = []
@@ -365,8 +365,8 @@ export function CallDialog({ open, mode, number, device, moduleService, onClose,
     if (r) {
       recorderRef.current = null
       r.recorder.onstop = () => {
-        const blob = new Blob(r.chunks, { type: r.mimeType || 'audio/webm' })
-        const ext = r.mimeType === 'audio/mp4' ? 'm4a' : 'webm'
+        const blob = new Blob(r.chunks, { type: r.mimeType || 'audio/mp4' })
+        const ext = r.mimeType === 'audio/mp4' || !r.mimeType ? 'm4a' : 'webm'
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
