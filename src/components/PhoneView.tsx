@@ -29,6 +29,8 @@ interface Props {
   isInCall: boolean
   /** 重试驱动状态检查。 */
   onRetryDriver: () => void
+  /** 是否当前处于电话 Tab（用于键盘输入仅在电话 Tab 时响应）。 */
+  active: boolean
 }
 
 const TYPE_ICON: Record<CallRecord['type'], typeof PhoneOutgoing> = {
@@ -61,6 +63,7 @@ export function PhoneView({
   callLogVersion,
   isInCall,
   onRetryDriver,
+  active,
 }: Props) {
   const [records, setRecords] = useState<CallRecord[]>([])
   const [loadState, setLoadState] = useState<'loading' | 'ready'>('loading')
@@ -139,10 +142,10 @@ export function PhoneView({
     }
   }, [menuRecordKey])
 
-  // 电脑键盘直接输入拨号（仅在无通话时响应）：数字/*/#/+ 追加，Backspace 退格，Enter 拨号。
+  // 电脑键盘直接输入拨号（仅在电话 Tab 且无通话时响应）：数字/*/#/+ 追加，Backspace 退格，Enter 拨号。
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (isInCall) return
+      if (!active || isInCall) return
       if (/^[0-9*#+]$/.test(e.key)) {
         press(e.key)
       } else if (e.key === 'Backspace') {

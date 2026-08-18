@@ -509,6 +509,7 @@ export function SettingsCard({
                 callLogVersion={callLogVersion}
                 isInCall={callNumber !== null}
                 onRetryDriver={refreshDriver}
+                active={activeTab === 'phone'}
               />
             </div>
             {activeTab === 'sms' && <SmsView device={device} moduleService={moduleService} />}
