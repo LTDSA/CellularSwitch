@@ -31,6 +31,20 @@ function App() {
     return () => window.removeEventListener('pagehide', handlePageHide)
   }, [])
 
+  // 模块连接后启用 beforeunload 确认弹窗：防止误关/误刷新导致通话、语音通路中断。
+  // 现代 Chrome 忽略自定义文本，显示浏览器默认提示（preventDefault + returnValue 均需设置）。
+  const moduleConnected =
+    state.type === 'connected-original' || state.type === 'connected-modified'
+  useEffect(() => {
+    if (!moduleConnected) return
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [moduleConnected])
+
   // 打开设备选择框并识别设备；用户取消或未识别时抛错，由调用方决定 UI。
   // 供初始连接与「重新连接」复用：只负责拿到设备，不直接改 App 状态。
   const connectDevice = useCallback(async (): Promise<USBDevice> => {
