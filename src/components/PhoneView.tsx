@@ -48,7 +48,7 @@ const TYPE_LABEL: Record<CallRecord['type'], string> = {
 const KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#']
 
 /** 语音服务状态（与 SettingsCard 一致）。 */
-type DriverState = 'checking' | 'noVolte' | 'adbOff' | 'audioOff' | 'loaded' | 'error'
+type DriverState = 'checking' | 'noSim' | 'noVolte' | 'adbOff' | 'audioOff' | 'loaded' | 'error'
 
 /**
  * 电话视图：左通话记录、右拨号键盘。
@@ -92,8 +92,8 @@ export function PhoneView({
   const backspace = () => setNumber((n) => n.slice(0, -1))
 
   const handleDial = () => {
-    // VoLTE 未启用时禁止拨号（兜底：屏幕按钮已置灰，此处拦截键盘 Enter 等其他入口）。
-    if (driverState === 'noVolte') return
+    // 未插卡 / VoLTE 未启用时禁止拨号（兜底：屏幕按钮已置灰，此处拦截键盘 Enter 等入口）。
+    if (driverState === 'noSim' || driverState === 'noVolte') return
     const target = number.trim()
     if (!target) return
     // 本地记录拨出。
@@ -173,6 +173,14 @@ export function PhoneView({
                   : 'bg-amber-50'
             }`}
           >
+            {driverState === 'noSim' && (
+              <div className="flex items-start gap-2">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+                <p className="text-xs leading-relaxed text-amber-700">
+                  未插入 SIM 卡，无法进行通话
+                </p>
+              </div>
+            )}
             {driverState === 'noVolte' && (
               <div className="flex items-start gap-2">
                 <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
@@ -350,7 +358,7 @@ export function PhoneView({
           <button
             type="button"
             onClick={handleDial}
-            disabled={!number.trim() || driverState === 'noVolte'}
+            disabled={!number.trim() || driverState === 'noSim' || driverState === 'noVolte'}
             aria-label="拨号"
             className="mt-2 flex h-14 w-14 items-center justify-center rounded-full bg-green-500 text-white transition-colors hover:bg-green-600 disabled:opacity-40"
           >

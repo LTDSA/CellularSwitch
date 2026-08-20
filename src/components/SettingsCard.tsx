@@ -30,7 +30,7 @@ interface Props {
 type QueryState = 'loading' | 'ready' | 'error'
 
 /** 语音服务状态：检查中 / VoLTE 未启用 / ADB 未开 / USB 音频未开 / 已就绪 / 出错。 */
-type DriverState = 'checking' | 'noVolte' | 'adbOff' | 'audioOff' | 'loaded' | 'error'
+type DriverState = 'checking' | 'noSim' | 'noVolte' | 'adbOff' | 'audioOff' | 'loaded' | 'error'
 
 export function SettingsCard({
   device,
@@ -86,6 +86,11 @@ export function SettingsCard({
     setDriverState('checking')
     setDriverError(null)
     try {
+      const simReady = await moduleService.querySimReady(device)
+      if (!simReady) {
+        setDriverState('noSim')
+        return
+      }
       const volteOk = await moduleService.queryVolteCapable(device)
       if (!volteOk) {
         setDriverState('noVolte')

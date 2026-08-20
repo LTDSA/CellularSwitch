@@ -730,6 +730,12 @@ export class ModuleService {
     return match[2] === '1'
   }
 
+  /** 查询 SIM 是否就绪（只读）：AT+CPIN? 返回 READY 视为已插卡就绪。 */
+  async querySimReady(device: USBDevice): Promise<boolean> {
+    const response = await this.sendAtCommand(device, AT_CPIN)
+    return /\+CPIN:\s*READY/i.test(response)
+  }
+
   /**
    * 查询通话记录：模块优先（CPBS 选 DC/MC/RC + CPBR 读条目）。
    * 模块不支持或读不到时返回空数组（由 UI 层回退本地记录）。
