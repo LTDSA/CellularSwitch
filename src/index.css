@@ -26,3 +26,5 @@ body {
 .thin-scrollbar::-webkit-scrollbar-thumb:hover {
   background-color: #9ca3af;
 }
+
+/* 连接成功后的入场动效由 React 状态驱动（图标 IconFlight 飞行 + 卡片/横幅 opacity/max-height 过渡），无需 CSS keyframes。 */

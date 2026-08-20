@@ -25,6 +25,8 @@ interface Props {
   onDeviceRefreshed: (freshDevice: USBDevice) => void
   /** 发起手动重连；成功返回选中的设备，用户取消/失败则抛错。 */
   onReconnect: () => Promise<USBDevice>
+  /** 连接成功后图标正在做飞天过渡时置 true，隐藏本卡片自有的图标（由浮层替代）。 */
+  iconHidden?: boolean
 }
 
 type QueryState = 'loading' | 'ready' | 'error'
@@ -39,6 +41,7 @@ export function SettingsCard({
   onRequestIdentityChange,
   onDeviceRefreshed,
   onReconnect,
+  iconHidden = false,
 }: Props) {
   const [mode, setMode] = useState<UsbnetMode | null>(null)
   const [queryState, setQueryState] = useState<QueryState>('loading')
@@ -59,10 +62,16 @@ export function SettingsCard({
   const [usbFunctionOpen, setUsbFunctionOpen] = useState(false)
   // 原始标识横幅是否已被用户关闭。
   const [bannerDismissed, setBannerDismissed] = useState(false)
+  // 原始标识横幅是否正在播放「收起」动画（收起结束后才真正从 DOM 移除）。
+  const [bannerClosing, setBannerClosing] = useState(false)
   // 系统通知权限：'granted' | 'denied' | 'default' | null(尚未检测)。
   const [notifPermission, setNotifPermission] = useState<NotificationPermission | null>(null)
   // 通知授权横幅是否已被用户关闭。
   const [notifBannerDismissed, setNotifBannerDismissed] = useState(false)
+  // 通知授权横幅是否正在播放「收起」动画。
+  const [notifBannerClosing, setNotifBannerClosing] = useState(false)
+  // 入场是否已完成（图标飞行 + 卡片展示完毕）：完成后横幅才展开、卡片平滑下移腾位。
+  const [entered, setEntered] = useState(false)
   // 通话状态（全局，任意 Tab 都能弹通话对话框）。
   const [callNumber, setCallNumber] = useState<string | null>(null)
   const [callMode, setCallMode] = useState<'dial' | 'incoming'>('dial')
@@ -116,6 +125,14 @@ export function SettingsCard({
     refreshDriver()
   }, [refreshDriver])
 
+  // 图标飞行结束（iconHidden 由 true → false）后，延迟 0.5s 再展开横幅（entered）。
+  // 入场动画与横幅展开解耦：卡片先完整展示，随后横幅平滑腾位 + 渐显。
+  useEffect(() => {
+    if (iconHidden) return
+    const t = setTimeout(() => setEntered(true), 500)
+    return () => clearTimeout(t)
+  }, [iconHidden])
+
   // 检测系统通知权限（挂载时），决定是否显示「开启通知」横幅。
   useEffect(() => {
     if (typeof Notification === 'undefined') return
@@ -127,11 +144,39 @@ export function SettingsCard({
     if (typeof Notification === 'undefined') return
     try {
       const p = await Notification.requestPermission()
+      // 授权成功：先播收起动画（保持 notifPermission=default 让横幅仍渲染），
+      // 动画结束后再更新权限值移除横幅，避免条件渲染直接消失。
+      if (p === 'granted') {
+        setNotifBannerClosing(true)
+        setTimeout(() => {
+          setNotifPermission('granted')
+          setNotifBannerDismissed(true)
+          setNotifBannerClosing(false)
+        }, 200)
+        return
+      }
       setNotifPermission(p)
-      if (p === 'granted') setNotifBannerDismissed(true)
     } catch {
       // 请求失败忽略。
     }
+  }, [])
+
+  // 关闭修改标识横幅：先播收起动画，结束后真正移除。
+  const closeBanner = useCallback(() => {
+    setBannerClosing(true)
+    setTimeout(() => {
+      setBannerDismissed(true)
+      setBannerClosing(false)
+    }, 200)
+  }, [])
+
+  // 关闭通知授权横幅：先播收起动画，结束后真正移除。
+  const closeNotifBanner = useCallback(() => {
+    setNotifBannerClosing(true)
+    setTimeout(() => {
+      setNotifBannerDismissed(true)
+      setNotifBannerClosing(false)
+    }, 200)
   }, [])
 
   // 发送来电通知（tag 去重）。权限已通过横幅按钮在用户手势里授权，这里只检查 granted。
@@ -383,51 +428,67 @@ export function SettingsCard({
 
   return (
     <div className="w-full flex flex-col items-center px-6">
-      <ModuleComputerIllustration className="w-64 h-48 mb-8" />
+      <ModuleComputerIllustration className={`w-48 h-36 mb-6 ${iconHidden ? 'opacity-0' : ''}`} />
 
       {isOriginal && !bannerDismissed && (
-        <div className="w-full max-w-3xl mb-4 flex items-center gap-3 rounded-xl border border-brand/20 bg-brand/5 px-4 py-3">
-          <p className="flex-1 text-sm leading-relaxed text-brand">
-            模块当前为原始设备标识，可修改为标准 Quectel 标识
-          </p>
-          <button
-            onClick={() => onRequestIdentityChange('modify')}
-            className="shrink-0 px-4 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-blue-600 transition-colors"
-          >
-            修改
-          </button>
-          <button
-            onClick={() => setBannerDismissed(true)}
-            aria-label="关闭提示"
-            className="shrink-0 p-1 rounded-md text-brand/60 hover:bg-brand/10 hover:text-brand transition-colors"
-          >
-            <X className="size-4" />
-          </button>
+        <div
+          className={`w-full max-w-3xl overflow-hidden transition-all ease-out ${
+            bannerClosing ? 'duration-200' : 'duration-500'
+          } ${entered && !bannerClosing ? 'mb-4 max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}
+        >
+          <div className="flex items-center gap-3 rounded-xl border border-brand/20 bg-brand/5 px-4 py-3">
+            <p className="flex-1 text-sm leading-relaxed text-brand">
+              模块当前为原始设备标识，可修改为标准 Quectel 标识
+            </p>
+            <button
+              onClick={() => onRequestIdentityChange('modify')}
+              className="shrink-0 px-4 py-1.5 rounded-lg bg-brand text-white text-sm font-medium hover:bg-blue-600 transition-colors"
+            >
+              修改
+            </button>
+            <button
+              onClick={closeBanner}
+              aria-label="关闭提示"
+              className="shrink-0 p-1 rounded-md text-brand/60 hover:bg-brand/10 hover:text-brand transition-colors"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </div>
       )}
 
       {notifPermission === 'default' && !notifBannerDismissed && (
-        <div className="w-full max-w-3xl mb-4 flex items-center gap-3 rounded-xl border border-amber-300/40 bg-amber-50 px-4 py-3">
-          <p className="flex-1 text-sm leading-relaxed text-amber-800">
-            开启通知权限，来电和短信到达时发送提醒
-          </p>
-          <button
-            onClick={handleRequestNotification}
-            className="shrink-0 px-4 py-1.5 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors"
-          >
-            授权
-          </button>
-          <button
-            onClick={() => setNotifBannerDismissed(true)}
-            aria-label="关闭提示"
-            className="shrink-0 p-1 rounded-md text-amber-500 hover:bg-amber-100 hover:text-amber-700 transition-colors"
-          >
-            <X className="size-4" />
-          </button>
+        <div
+          className={`w-full max-w-3xl overflow-hidden transition-all ease-out ${
+            notifBannerClosing ? 'duration-200' : 'duration-500'
+          } ${entered && !notifBannerClosing ? 'mb-4 max-h-24 opacity-100' : 'max-h-0 opacity-0'}`}
+        >
+          <div className="flex items-center gap-3 rounded-xl border border-amber-300/40 bg-amber-50 px-4 py-3">
+            <p className="flex-1 text-sm leading-relaxed text-amber-800">
+              开启通知权限，来电和短信到达时发送提醒
+            </p>
+            <button
+              onClick={handleRequestNotification}
+              className="shrink-0 px-4 py-1.5 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors"
+            >
+              授权
+            </button>
+            <button
+              onClick={closeNotifBanner}
+              aria-label="关闭提示"
+              className="shrink-0 p-1 rounded-md text-amber-500 hover:bg-amber-100 hover:text-amber-700 transition-colors"
+            >
+              <X className="size-4" />
+            </button>
+          </div>
         </div>
       )}
 
-      <div className="w-full max-w-3xl rounded-2xl bg-white shadow-sm">
+      <div
+        className={`w-full max-w-3xl rounded-2xl bg-white shadow-sm transition-opacity duration-500 ${
+          iconHidden ? 'opacity-0' : 'opacity-100'
+        }`}
+      >
         <div className="px-6 pt-5 border-b border-gray-100">
           <h1 className="text-lg font-semibold text-gray-900">
             {device.productName || '模块设置'}

@@ -1,7 +1,13 @@
-export function ModuleComputerIllustration({ className = '' }: { className?: string }) {
+export function ModuleComputerIllustration({
+  className = '',
+}: {
+  className?: string
+  'data-module-icon'?: string
+}) {
   return (
     <svg
       className={className}
+      data-module-icon=""
       viewBox="0 0 200 160"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"

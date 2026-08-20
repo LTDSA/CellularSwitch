@@ -8,6 +8,7 @@ import { ProcessingScreen } from './components/ProcessingScreen'
 import { ResultScreen } from './components/ResultScreen'
 import { DisclaimerDialog } from './components/DisclaimerDialog'
 import { UnsupportedIllustration } from './components/icons'
+import { IconFlight } from './components/IconFlight'
 import { mapErrorMessage } from './utils/mapErrorMessage'
 import { isUserCancellation } from './utils/isUserCancellation'
 
@@ -19,6 +20,8 @@ function App() {
     UsbService.isSupported() ? { type: 'idle' } : { type: 'unsupported' },
   )
   const [pendingOperation, setPendingOperation] = useState<'modify' | 'restore' | null>(null)
+  // 连接前捕获的图标旧 rect；非 null 表示正在播放「图标飞到新位置」过渡。
+  const [iconFrom, setIconFrom] = useState<DOMRect | null>(null)
 
   // 页面卸载（刷新 / 关闭 / 导航离开）时主动关闭 USB 会话。设备处于异常
   // 状态（如 Windows 下接口挂起）时，浏览器自动清理残留的 pending 传输 /
@@ -58,6 +61,10 @@ function App() {
     try {
       const device = await connectDevice()
       const mode = moduleService.detectState(device)
+      // 捕获连接前 IdleScreen 的图标位置，用于「图标飞到新位置」FLIP 动画。
+      const el = document.querySelector<HTMLElement>('[data-module-icon]')
+      const fromRect = el ? el.getBoundingClientRect() : null
+      setIconFrom(fromRect)
       if (mode === 'original') {
         setState({ type: 'connected-original', device })
       } else {
@@ -172,6 +179,7 @@ function App() {
           onRequestIdentityChange={(op) => handleAction(op)}
           onDeviceRefreshed={handleDeviceRefreshed}
           onReconnect={connectDevice}
+          iconHidden={iconFrom !== null}
         />
       )}
 
@@ -207,6 +215,11 @@ function App() {
         onConfirm={handleConfirm}
         onCancel={() => setPendingOperation(null)}
       />
+
+      {/* 连接成功后的图标飞行动画：浮层从旧位置飞到 SettingsCard 图标新位置，飞完清除。 */}
+      {iconFrom && (
+        <IconFlight from={iconFrom} onDone={() => setIconFrom(null)} />
+      )}
     </div>
   )
 }
