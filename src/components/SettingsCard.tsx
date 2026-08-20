@@ -59,6 +59,10 @@ export function SettingsCard({
   const [usbFunctionOpen, setUsbFunctionOpen] = useState(false)
   // 原始标识横幅是否已被用户关闭。
   const [bannerDismissed, setBannerDismissed] = useState(false)
+  // 系统通知权限：'granted' | 'denied' | 'default' | null(尚未检测)。
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | null>(null)
+  // 通知授权横幅是否已被用户关闭。
+  const [notifBannerDismissed, setNotifBannerDismissed] = useState(false)
   // 通话状态（全局，任意 Tab 都能弹通话对话框）。
   const [callNumber, setCallNumber] = useState<string | null>(null)
   const [callMode, setCallMode] = useState<'dial' | 'incoming'>('dial')
@@ -107,24 +111,92 @@ export function SettingsCard({
     refreshDriver()
   }, [refreshDriver])
 
-  // 发送来电通知（首次请求权限；tag 去重，避免同一通来电重复弹通知）。
-  const notifyIncoming = useCallback(async (number: string) => {
+  // 检测系统通知权限（挂载时），决定是否显示「开启通知」横幅。
+  useEffect(() => {
+    if (typeof Notification === 'undefined') return
+    setNotifPermission(Notification.permission)
+  }, [])
+
+  // 用户点击「授权」→ 在用户手势里请求权限（Chrome 才允许弹授权框）。
+  const handleRequestNotification = useCallback(async () => {
     if (typeof Notification === 'undefined') return
     try {
-      let permission = Notification.permission
-      if (permission === 'default') {
-        permission = await Notification.requestPermission()
-      }
-      if (permission === 'granted') {
-        new Notification('来电', {
-          body: number || '未知号码',
-          tag: 'cellularswitch-incoming-call',
-        })
+      const p = await Notification.requestPermission()
+      setNotifPermission(p)
+      if (p === 'granted') setNotifBannerDismissed(true)
+    } catch {
+      // 请求失败忽略。
+    }
+  }, [])
+
+  // 发送来电通知（tag 去重）。权限已通过横幅按钮在用户手势里授权，这里只检查 granted。
+  // 点击通知聚焦页面（来电对话框是全局弹出的，无需切 Tab）。
+  const notifyIncoming = useCallback((number: string) => {
+    if (typeof Notification === 'undefined') return
+    if (Notification.permission !== 'granted') return
+    try {
+      const n = new Notification(`来电 · ${number || '未知号码'}`, {
+        body: '有新的来电',
+        tag: 'cellularswitch-incoming-call',
+      })
+      n.onclick = () => {
+        window.focus()
+        n.close()
       }
     } catch {
       // 非 secure context 或 Notification 不可用时忽略。
     }
   }, [])
+
+  // 发送短信通知（按短信 index 去重）。点击通知跳转到短信 Tab。
+  const notifySms = useCallback(
+    (msg: { index: number; address: string; text: string }) => {
+      if (typeof Notification === 'undefined') return
+      if (Notification.permission !== 'granted') return
+      try {
+        const n = new Notification(`短信 · ${msg.address || '未知号码'}`, {
+          body: msg.text,
+          tag: `cellularswitch-sms-${msg.index}`,
+        })
+        n.onclick = () => {
+          window.focus()
+          setActiveTab('sms')
+          n.close()
+        }
+      } catch {
+        // 非 secure context 或 Notification 不可用时忽略。
+      }
+    },
+    [],
+  )
+
+  // 检测新短信（全局：任意 Tab 都轮询）。用「已知 index 集合」diff 出新增的 incoming 短信，
+  // 通知后并入已知集合，避免重复通知。
+  const knownSmsIndexes = useRef<Set<number>>(new Set())
+  const smsPollStarted = useRef(false)
+  useEffect(() => {
+    if (!device) return
+    // 首次轮询只建立基线（记录当前全部短信为「已知」），不通知历史短信。
+    const id = setInterval(async () => {
+      try {
+        const msgs = await moduleService.listSms(device)
+        const incoming = msgs.filter((m) => m.direction === 'incoming')
+        if (!smsPollStarted.current) {
+          smsPollStarted.current = true
+          incoming.forEach((m) => knownSmsIndexes.current.add(m.index))
+          return
+        }
+        for (const m of incoming) {
+          if (knownSmsIndexes.current.has(m.index)) continue
+          knownSmsIndexes.current.add(m.index)
+          notifySms({ index: m.index, address: m.address, text: m.text })
+        }
+      } catch {
+        // 轮询失败忽略。
+      }
+    }, 5000)
+    return () => clearInterval(id)
+  }, [device, moduleService, notifySms])
 
   // 检测呼入（仅「语音服务已就绪」时轮询 CLCC，检测呼入振铃 status=4）。全局：任意 Tab 都检测。
   const incomingNotified = useRef(false)
@@ -323,6 +395,27 @@ export function SettingsCard({
             onClick={() => setBannerDismissed(true)}
             aria-label="关闭提示"
             className="shrink-0 p-1 rounded-md text-brand/60 hover:bg-brand/10 hover:text-brand transition-colors"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+      )}
+
+      {notifPermission === 'default' && !notifBannerDismissed && (
+        <div className="w-full max-w-3xl mb-4 flex items-center gap-3 rounded-xl border border-amber-300/40 bg-amber-50 px-4 py-3">
+          <p className="flex-1 text-sm leading-relaxed text-amber-800">
+            开启通知权限，来电和短信到达时发送提醒
+          </p>
+          <button
+            onClick={handleRequestNotification}
+            className="shrink-0 px-4 py-1.5 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors"
+          >
+            授权
+          </button>
+          <button
+            onClick={() => setNotifBannerDismissed(true)}
+            aria-label="关闭提示"
+            className="shrink-0 p-1 rounded-md text-amber-500 hover:bg-amber-100 hover:text-amber-700 transition-colors"
           >
             <X className="size-4" />
           </button>
