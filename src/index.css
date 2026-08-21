@@ -28,3 +28,34 @@ body {
 }
 
 /* 连接成功后的入场动效由 React 状态驱动（图标 IconFlight 飞行 + 卡片/横幅 opacity/max-height 过渡），无需 CSS keyframes。 */
+
+/* 下拉菜单展开/收起动效：淡入 + 轻微上移缩放。菜单条件渲染，展开时挂载触发，
+   收起需配合「延迟卸载」才能反向播放（见各 Select 组件的 closing 处理）。 */
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes menu-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.96);
+  }
+}
+.animate-menu-in {
+  transform-origin: top right;
+  animation: menu-in 0.09s ease-out;
+}
+.animate-menu-out {
+  transform-origin: top right;
+  animation: menu-out 0.08s ease-in forwards;
+}

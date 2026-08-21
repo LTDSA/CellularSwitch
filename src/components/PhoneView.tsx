@@ -70,6 +70,20 @@ export function PhoneView({
   const [number, setNumber] = useState('')
   // 当前展开菜单的通话记录 key（`${type}-${id}-${number}`），null 表示无菜单展开。
   const [menuRecordKey, setMenuRecordKey] = useState<string | null>(null)
+  // 通话记录菜单是否正在播放「收起」动画（收起结束后才真正关闭）。
+  const [menuClosing, setMenuClosing] = useState(false)
+
+  // 关闭通话记录菜单：先播收起动画，动画结束再真正关闭。
+  const closeMenu = useCallback(() => {
+    if (menuClosing) return
+    setMenuClosing(true)
+  }, [menuClosing])
+  const handleMenuAnimationEnd = useCallback(() => {
+    if (menuClosing) {
+      setMenuRecordKey(null)
+      setMenuClosing(false)
+    }
+  }, [menuClosing])
 
   // 通话记录统一存 localStorage（模块 DC/MC/RC 电话本只读，CPBW 删除返回 CME ERROR 3，
   // 且「模块优先」会导致删除后被重新读回），故只读本地。
@@ -105,13 +119,15 @@ export function PhoneView({
 
   // 回拨：把号码填充到拨号键盘，不直接拨号。
   const handleCallback = (r: CallRecord) => {
-    setMenuRecordKey(null)
+    closeMenu()
     setNumber(r.number)
   }
 
   // 删除一条通话记录：UI 移除 + 本地删除（记录统一存 localStorage，模块电话本只读）。
+  // 记录连同菜单一起消失，故直接关闭菜单（不播收起动画）。
   const handleDeleteRecord = (r: CallRecord) => {
     setMenuRecordKey(null)
+    setMenuClosing(false)
     setRecords((prev) =>
       prev.filter((c) => !(c.id === r.id && c.type === r.type && c.number === r.number)),
     )
@@ -129,10 +145,10 @@ export function PhoneView({
       ) {
         return
       }
-      setMenuRecordKey(null)
+      closeMenu()
     }
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setMenuRecordKey(null)
+      if (e.key === 'Escape') closeMenu()
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -140,7 +156,7 @@ export function PhoneView({
       document.removeEventListener('pointerdown', onPointerDown)
       document.removeEventListener('keydown', onKeyDown)
     }
-  }, [menuRecordKey])
+  }, [menuRecordKey, closeMenu])
 
   // 电脑键盘直接输入拨号（仅在电话 Tab 且无通话时响应）：数字/*/#/+ 追加，Backspace 退格，Enter 拨号。
   useEffect(() => {
@@ -283,7 +299,11 @@ export function PhoneView({
                       <div className="relative shrink-0">
                         <button
                           type="button"
-                          onClick={() => setMenuRecordKey((k) => (k === key ? null : key))}
+                          onClick={() =>
+                            menuRecordKey === key
+                              ? closeMenu()
+                              : setMenuRecordKey(key)
+                          }
                           aria-label="通话记录操作"
                           className="rounded-md p-1 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-600"
                         >
@@ -293,7 +313,10 @@ export function PhoneView({
                         {menuRecordKey === key && (
                           <div
                             role="menu"
-                            className="absolute right-0 top-full z-10 mt-1 w-32 rounded-xl bg-white p-1.5 shadow-lg ring-1 ring-black/5"
+                            onAnimationEnd={handleMenuAnimationEnd}
+                            className={`absolute right-0 top-full z-10 mt-1 w-32 rounded-xl bg-white p-1.5 shadow-lg ring-1 ring-black/5 ${
+                              menuClosing ? 'animate-menu-out' : 'animate-menu-in'
+                            }`}
                           >
                             <button
                               type="button"

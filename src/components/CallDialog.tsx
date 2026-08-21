@@ -106,6 +106,20 @@ export function CallDialog({ open, mode, number, device, moduleService, onClose,
   const [inputDeviceId, setInputDeviceId] = useState('')
   const [muted, setMuted] = useState(false)
   const [showAudioPicker, setShowAudioPicker] = useState(false)
+  // 音频输入设备菜单是否正在播放「收起」动画（收起结束后才真正关闭）。
+  const [audioPickerClosing, setAudioPickerClosing] = useState(false)
+
+  // 关闭音频设备菜单：先播收起动画，动画结束再真正关闭。
+  const closeAudioPicker = useCallback(() => {
+    if (audioPickerClosing) return
+    setAudioPickerClosing(true)
+  }, [audioPickerClosing])
+  const handleAudioPickerAnimationEnd = useCallback(() => {
+    if (audioPickerClosing) {
+      setShowAudioPicker(false)
+      setAudioPickerClosing(false)
+    }
+  }, [audioPickerClosing])
   // 录音 + DTMF 键盘。
   const [recording, setRecording] = useState(false)
   const [showDtmf, setShowDtmf] = useState(false)
@@ -392,7 +406,7 @@ export function CallDialog({ open, mode, number, device, moduleService, onClose,
     switchMute(false)
     setInputDeviceId(id)
     saveDevice('input', id)
-    setShowAudioPicker(false)
+    closeAudioPicker()
     switchInputDevice(id).catch(() => {
       // 切换失败忽略（下次通话仍用新设备）。
     })
@@ -402,7 +416,7 @@ export function CallDialog({ open, mode, number, device, moduleService, onClose,
   const selectMute = () => {
     setMuted(true)
     switchMute(true)
-    setShowAudioPicker(false)
+    closeAudioPicker()
   }
 
   return (
@@ -464,7 +478,9 @@ export function CallDialog({ open, mode, number, device, moduleService, onClose,
             <div className="relative">
               <button
                 type="button"
-                onClick={() => setShowAudioPicker((v) => !v)}
+                onClick={() =>
+                  showAudioPicker ? closeAudioPicker() : setShowAudioPicker(true)
+                }
                 disabled={phase === 'ended' || devices.length === 0}
                 className="flex w-16 flex-col items-center gap-1.5 disabled:opacity-40"
               >
@@ -482,7 +498,10 @@ export function CallDialog({ open, mode, number, device, moduleService, onClose,
               {showAudioPicker && phase !== 'ended' && (
                 <div
                   role="menu"
-                  className="absolute left-1/2 top-full z-20 mt-2 w-56 -translate-x-1/2 rounded-xl bg-white p-1.5 shadow-lg ring-1 ring-black/5"
+                  onAnimationEnd={handleAudioPickerAnimationEnd}
+                  className={`absolute left-0 right-0 top-full z-20 mx-auto mt-2 w-56 rounded-xl bg-white p-1.5 shadow-lg ring-1 ring-black/5 ${
+                    audioPickerClosing ? 'animate-menu-out' : 'animate-menu-in'
+                  }`}
                 >
                   <button
                     type="button"

@@ -22,6 +22,7 @@ const MODES: { value: NwScanMode; label: string; description: string }[] = [
  */
 export function NwScanModeSelect({ value, onSelect }: Props) {
   const [open, setOpen] = useState(false)
+  const [closing, setClosing] = useState(false)
   const [activeIndex, setActiveIndex] = useState(0)
   const [direction, setDirection] = useState<'down' | 'up'>('down')
   const rootRef = useRef<HTMLDivElement>(null)
@@ -32,8 +33,19 @@ export function NwScanModeSelect({ value, onSelect }: Props) {
   const selectedIndex = MODES.findIndex((m) => m.value === value)
   const wasOpenRef = useRef(false)
 
+  const close = () => {
+    if (closing) return
+    setClosing(true)
+  }
+  const handleMenuAnimationEnd = () => {
+    if (closing) {
+      setOpen(false)
+      setClosing(false)
+    }
+  }
+
   const select = (mode: NwScanMode) => {
-    setOpen(false)
+    close()
     onSelect(mode)
   }
 
@@ -70,11 +82,11 @@ export function NwScanModeSelect({ value, onSelect }: Props) {
     if (!open) return
     const onPointerDown = (e: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
-        setOpen(false)
+        close()
       }
     }
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false)
+      if (e.key === 'Escape') close()
     }
     document.addEventListener('pointerdown', onPointerDown)
     document.addEventListener('keydown', onKeyDown)
@@ -125,10 +137,10 @@ export function NwScanModeSelect({ value, onSelect }: Props) {
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (open ? close() : setOpen(true))}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm text-gray-900 ring-1 ring-inset ring-gray-200 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-brand/30"
+        className="inline-flex items-center gap-2 rounded-lg bg-white px-3 py-1.5 text-sm text-gray-900 ring-1 ring-inset ring-gray-200 hover:bg-gray-50 focus:outline-none"
       >
         <span className="min-w-0">{selected?.label}</span>
         <ChevronDown
@@ -142,9 +154,10 @@ export function NwScanModeSelect({ value, onSelect }: Props) {
         <div
           ref={menuRef}
           role="menu"
+          onAnimationEnd={handleMenuAnimationEnd}
           className={`absolute right-0 z-10 w-64 rounded-xl bg-white p-1.5 shadow-lg ring-1 ring-black/5 ${
             direction === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'
-          }`}
+          } ${closing ? 'animate-menu-out' : 'animate-menu-in'}`}
         >
           {MODES.map((m, i) => {
             const isSelected = m.value === value
